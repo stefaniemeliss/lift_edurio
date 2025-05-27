@@ -1,7 +1,3 @@
-# Clear the workspace and run garbage collection
-rm(list = ls())
-gc()
-
 # source functions
 source_code(target_repo = "lift_edurio", file_name = "functions.R")
 

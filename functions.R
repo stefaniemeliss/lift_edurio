@@ -144,3 +144,37 @@ standardise_column_names <- function(df, lookup = reverse_lookup) {
   
   return(df_filtered)
 }
+
+# Function to produce histograms by group
+plot_histogram <- function(data = df, 
+                           xvar = x,
+                           xlower = NULL,
+                           xupper = NULL,
+                           title = "",
+                           xlab = "",
+                           bin_width = NULL) {
+  plot <- 
+    # define variables to plot based on input
+    ggplot(data, aes(x = get(xvar))) +
+    # basic histogram with density
+    geom_histogram(aes(y=..density..), color = nondominant_col, fill = nondominant_col, bins = 30, binwidth = bin_width) +
+    # add density plot
+    geom_density(alpha = .2, fill = dominant_col, col = dominant_col) +
+    # add mean as vertical line
+    geom_vline(aes(xintercept = mean(get(xvar), na.rm = T)),
+               color = dominant_col, linetype = "dashed", linewidth = 1) +
+    # add theme
+    ambition_theme +
+    # determine titles
+    ggtitle(paste0(title)) + xlab(paste0(xlab)) + ylab("Density") 
+  
+  
+  # determine coord system + scales
+  if (!is.null(xlower) | !is.null(xupper)) {
+    
+    #  modify x axis
+    plot <- plot + coord_cartesian(xlim = c(xlower, xupper))
+  }
+  return(plot)
+  
+}

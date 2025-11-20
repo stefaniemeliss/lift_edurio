@@ -455,6 +455,7 @@ get_betas_mixed <- function(
       df_std   = df_std,
       pcor_unstd = t_unstd / sqrt(t_unstd^2 + df_unstd),
       pcor_std   = t_std / sqrt(t_std^2 + df_std),
+      pcor_resid    = pcor_resid, # residuals-based partial correlation
       formula_unstd = rep(paste(as.character(formula_unstd)[2], "~", as.character(formula_unstd)[3]), length(predictors)),
       formula_std  = rep(paste(as.character(formula_std)[2], "~", as.character(formula_std)[3]), length(predictors)),
       row.names = NULL

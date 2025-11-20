@@ -338,6 +338,7 @@ partial_correlation_residuals_lme <- function(df, outcome, predictor, controls) 
   
   # enter all control variables as fixed effects
   fe_formula <- if (length(controls) > 0) paste(controls, collapse = " + ") else "1"
+  re_formula <- paste0("(1 | ", re_vars, ")", collapse = " + ")
   
   # combine into formula
   formula_y <- as.formula(

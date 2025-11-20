@@ -361,11 +361,11 @@ get_betas_mixed <- function(
   
   # If no random effects, use fixed effects model with robust SEs, clustering by fe_vars
   if (is.null(re_vars) || length(re_vars) == 0) {
-    stop("No random effects specified and no fixed effects specified. At least one clustering variable (fe_vars) is required for robust SEs.")
     return(get_betas_cluster(df = df, outcome = outcome,  predictors = predictors,
                              fe_vars = fe_vars, cluster_vars = fe_vars,  # use fixed effects as clustering variables
                              binary_outcome = binary_outcome
     ))
+    stop("No random effects specified and no fixed effects specified. At least one clustering variable (fe_vars) is required for robust SEs.")
   }
   
   # Build fixed and random effects parts

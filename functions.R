@@ -333,6 +333,26 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
   return(result_table)
 }
 
+# Helper function for residuals-based partial correlation
+partial_correlation_residuals_lme <- function(df, outcome, predictor, controls) {
+  
+  # enter all control variables as fixed effects
+  fe_formula <- if (length(controls) > 0) paste(controls, collapse = " + ") else "1"
+  
+  # combine into formula
+  formula_y <- as.formula(
+    paste0(outcome, " ~ ", fe_formula, if (!is.null(re_formula)) paste0(" + ", re_formula) else "")
+  )
+  formula_x <- as.formula(
+    paste0(predictor, " ~ ", fe_formula, if (!is.null(re_formula)) paste0(" + ", re_formula) else "")
+  )
+  
+  # correlate residuals
+  resid_y <- residuals(lmer(formula_y, data = df))
+  resid_x <- residuals(lmer(formula_x, data = df))
+  cor(resid_y, resid_x)
+}
+
 get_betas_mixed <- function(
     df, outcome, predictors, fe_vars = NULL, re_vars = NULL,
     binary_outcome = TRUE
@@ -340,14 +360,13 @@ get_betas_mixed <- function(
   
   # If no random effects, use fixed effects model with robust SEs, clustering by fe_vars
   if (is.null(re_vars) || length(re_vars) == 0) {
-    if (is.null(fe_vars) || length(fe_vars) == 0) {
-      stop("No random effects specified and no fixed effects specified. At least one clustering variable (fe_vars) is required for robust SEs.")
-    }
+    stop("No random effects specified and no fixed effects specified. At least one clustering variable (fe_vars) is required for robust SEs.")
     return(get_betas_cluster(df = df, outcome = outcome,  predictors = predictors,
                              fe_vars = fe_vars, cluster_vars = fe_vars,  # use fixed effects as clustering variables
                              binary_outcome = binary_outcome
     ))
-  }  
+  }
+  
   # Build fixed and random effects parts
   fe_part <- c(predictors, fe_vars)
   fe_formula <- if (length(fe_part) > 0) paste(fe_part, collapse = " + ") else "1"
@@ -379,6 +398,17 @@ get_betas_mixed <- function(
     model_unstd <- lmerTest::lmer(formula_unstd, data = df)
     model_std   <- lmerTest::lmer(formula_std,   data = df)
   }
+  
+  # For continuous outcomes, calculate partial correlations using residuals
+  if (!binary_outcome) {
+    # Controls for partial correlation: all other predictors and fixed effects
+    controls <- setdiff(predictors, fe_part) # placeholder, will be replaced below
+    pcor_resid <- sapply(predictors, function(pred) {
+      controls <- setdiff(fe_part, pred)
+      partial_correlation_residuals_lme(df, outcome, pred, controls)
+    })
+  }
+  
   
   # Extract coefficients for predictors
   coefs_unstd <- summary(model_unstd)$coefficients

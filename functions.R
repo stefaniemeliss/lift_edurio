@@ -334,7 +334,7 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
 }
 
 # Helper function for residuals-based partial correlation
-partial_correlation_residuals_lme <- function(df, outcome, predictor, controls) {
+partial_correlation_residuals_lme <- function(df, outcome, predictor, controls, re_vars) {
   
   # enter all control variables as fixed effects
   fe_formula <- if (length(controls) > 0) paste(controls, collapse = " + ") else "1"
@@ -406,7 +406,7 @@ get_betas_mixed <- function(
     controls <- setdiff(predictors, fe_part) # placeholder, will be replaced below
     pcor_resid <- sapply(predictors, function(pred) {
       controls <- setdiff(fe_part, pred)
-      partial_correlation_residuals_lme(df, outcome, pred, controls)
+      partial_correlation_residuals_lme(df, outcome, pred, controls, re_vars = re_vars)
     })
   }
   

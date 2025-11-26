@@ -195,22 +195,32 @@ partial_correlation_residuals <- function(df, outcome, predictor, controls) {
 
 get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, binary_outcome = TRUE) {
   
+  
   # Build formulas
   if (binary_outcome) {
     formula_unstd <- as.formula(
-      paste(outcome, "~", paste(c(predictors, fe_vars), collapse = " + "))
+      paste0(outcome, " ~ ",
+             paste0(predictors, collapse = " + "),
+             if (!is.null(fe_vars)) paste0(" + ", paste(fe_vars, collapse = " + ")) else "")
     )
     formula_std <- as.formula(
-      paste0(outcome, " ~ ", paste0("scale(", predictors, ")", collapse = " + "), " + ", paste0(fe_vars, collapse = " + "))
+      paste0(outcome, " ~ ",
+             paste0("scale(", predictors, ")", collapse = " + "),
+             if (!is.null(fe_vars)) paste0(" + ", paste(fe_vars, collapse = " + ")) else "")
     )
     formula_null <- as.formula(paste0(outcome, " ~ 1"))
   } else {
     formula_unstd <- as.formula(
-      paste(outcome, "~", paste(c(predictors, fe_vars), collapse = " + "))
+      paste0(outcome, " ~ ",
+             paste0(predictors, collapse = " + "),
+             if (!is.null(fe_vars)) paste0(" + ", paste(fe_vars, collapse = " + ")) else "")
     )
     formula_std <- as.formula(
-      paste0("scale(", outcome, ") ~ ", paste0("scale(", predictors, ")", collapse = " + "), " + ", paste0(fe_vars, collapse = " + "))
+      paste0("scale(", outcome, ") ~ ",
+             paste0("scale(", predictors, ")", collapse = " + "),
+             if (!is.null(fe_vars)) paste0(" + ", paste(fe_vars, collapse = " + ")) else "")
     )
+    
   }
   
   # Fit models
@@ -246,14 +256,14 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
   robust_std_rows   <- rownames(robust_std)   %in% preds_std_names
   
   # For continuous outcomes, calculate partial correlations using residuals
-  if (!binary_outcome) {
+  if (length(predictors) > 1 & !binary_outcome) {
     # Controls for partial correlation: all other predictors and fixed effects
     controls <- c(setdiff(predictors, predictors), fe_vars) # placeholder, will be replaced below
     pcor_resid <- sapply(predictors, function(pred) {
       controls <- c(setdiff(predictors, pred), fe_vars)
       partial_correlation_residuals(df, outcome, pred, controls)
     })
-  }
+  } else { pcor_resid = NA}
   
   # Combine into one table in your requested order
   if (binary_outcome) {

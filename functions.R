@@ -203,6 +203,7 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
     formula_std <- as.formula(
       paste0(outcome, " ~ ", paste0("scale(", predictors, ")", collapse = " + "), " + ", paste0(fe_vars, collapse = " + "))
     )
+    formula_null <- as.formula(paste0(outcome, " ~ 1"))
   } else {
     formula_unstd <- as.formula(
       paste(outcome, "~", paste(c(predictors, fe_vars), collapse = " + "))
@@ -216,6 +217,9 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
   if (binary_outcome) {
     model_unstd <- glm(formula_unstd, data = df, family = binomial())
     model_std   <- glm(formula_std,   data = df, family = binomial())
+    # Likelihood ratio test
+    model_null   <- glm(formula_null,   data = df, family = binomial())
+    lrt <- anova(model_null, model_unstd, test = "Chisq")
   } else {
     model_unstd <- lm(formula_unstd, data = df)
     model_std   <- lm(formula_std,   data = df)
@@ -279,6 +283,14 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
       # df
       df_unstd   = df.residual(model_unstd),
       df_std     = df.residual(model_std),
+      # model
+      model_fit = "Likelihood ratio (Chi-square)",
+      param_fit = "Chi-square (delta deviance)",
+      value_fit = as.numeric(lrt$Deviance[2]), 
+      p_fit = as.numeric(lrt$`Pr(>Chi)`[2]), 
+      df_fit = lrt$Df[2], 
+      measure_var = "Pseudo R-squared (Nagelkerke)",
+      value_var = pscl::pR2(model_unstd)["r2CU"],
       # formula
       formula_unstd = rep(paste(as.character(formula_unstd)[2], "~", as.character(formula_unstd)[3]), length(predictors)),
       formula_std  = rep(paste(as.character(formula_std)[2], "~", as.character(formula_std)[3]), length(predictors)),
@@ -292,6 +304,10 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
     t_std_CR   <- robust_std[robust_std_rows, "t value"]
     df_unstd   <- df.residual(model_unstd)
     df_std     <- df.residual(model_std)
+    
+    # compute p value from overall F test
+    f_stat <- summary(model_unstd)$fstatistic
+    p_val = pf(f_stat[1], f_stat[2], f_stat[3], lower.tail = FALSE)
     
     result_table <- data.frame(
       outcome = outcome,
@@ -323,11 +339,20 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
       # df
       df_unstd = df_unstd,
       df_std   = df_std,
+      # model
+      model_fit = "Overall F-test",
+      param_fit = "F-statistic",
+      value_fit = f_stat[1],
+      p_fit = p_val,
+      df_fit = paste0(f_stat[2], ", ", f_stat[3]),
+      measure_var = "Multiple R-squared",
+      value_var = summary(model_unstd)$r.squared,
       # formula
       formula_unstd = rep(paste(as.character(formula_unstd)[2], "~", as.character(formula_unstd)[3]), length(predictors)),
       formula_std  = rep(paste(as.character(formula_std)[2], "~", as.character(formula_std)[3]), length(predictors)),
       row.names = NULL
     )
+    
   }
   
   return(result_table)

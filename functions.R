@@ -812,3 +812,239 @@ unique_predictor_contributions <- function(df, outcome, predictors, fe_vars = NU
   }
   do.call(rbind, results)
 }
+
+# Function to compute AME for a smooth term for a bootstrap sample
+boot_ame <- function(data, # input data
+                     indices, # Indices of clusters to sample (provided by boot)
+                     smooth_name) # name of the smooth term you want the AME for
+{
+  # Samples clusters (e.g. school-year pairs) rather than individual rows
+  sampled_clusters <- unique(cluster_var)[indices]
+  rows <- which(cluster_var %in% sampled_clusters)
+  d <- droplevels(data[rows, ])
+  
+  # Get all factor variables in d
+  factor_vars <- names(Filter(is.factor, d))
+  
+  # Identify which factor variables have only one level
+  one_level_factors <- factor_vars[sapply(d[factor_vars], function(x) nlevels(x) < 2)]
+  
+  # Remove categorical variables with only one level in d
+  cat_vars_boot <- setdiff(fe_vars, one_level_factors)
+  
+  # Rebuild formula
+  rhs <- paste(c(paste0("s(", predictors, ")"), cat_vars_boot), collapse = " + ")
+  new_formula <- as.formula(paste(outcome, "~", rhs))
+  
+  # Fit model on the bootstrap sample
+  m <- mgcv::gam(new_formula, data = d, family = family_gam, method = "REML")
+  deriv_df <- derivatives(m, select = smooth_name, data = d, type = "central")
+  mean(deriv_df$.derivative, na.rm = TRUE)
+}
+
+boot_ame_parallel <- function(
+    smooth_name,    # Name of the smooth term to compute AME for
+    data,           # Full data frame to sample from
+    clusters,       # Vector of unique cluster IDs
+    cluster_var,    # Vector of cluster assignments for each row in data
+    predictors,     # Vector of continuous predictor names
+    fe_vars,        # Vector of categorical (fixed effect) variable names
+    outcome,        # Outcome variable name (as string)
+    family_gam,     # GAM family (e.g. gaussian(), binomial())
+    n_boot          # Number of bootstrap samples
+) {
+  # Run bootstrap iterations in parallel
+  # future_sapply runs each bootstrap iteration in parallel
+  future_sapply(1:n_boot, function(i) {
+    # 1. Sample clusters with replacement
+    indices <- sample(seq_along(clusters), size = length(clusters), replace = TRUE)
+    sampled_clusters <- clusters[indices]
+    
+    # 2. Find rows in data belonging to sampled clusters
+    rows <- which(cluster_var %in% sampled_clusters)
+    d <- droplevels(data[rows, ])
+    
+    # 3. Identify factor variables in the bootstrap sample
+    factor_vars <- names(Filter(is.factor, d))
+    
+    # 4. Remove categorical variables with only one level (cannot fit contrasts)
+    one_level_factors <- factor_vars[sapply(d[factor_vars], function(x) nlevels(x) < 2)]
+    cat_vars_boot <- setdiff(fe_vars, one_level_factors)
+    
+    # 5. Build formula: smooths for continuous, linear for categorical
+    rhs <- paste(c(paste0("s(", predictors, ")"), cat_vars_boot), collapse = " + ")
+    new_formula <- as.formula(paste(outcome, "~", rhs))
+    
+    # 6. Fit GAM to the bootstrap sample
+    m <- mgcv::gam(new_formula, data = d, family = family_gam, method = "REML")
+    
+    # 7. Compute derivatives (marginal effects) for the smooth term
+    deriv_df <- derivatives(m, select = smooth_name, data = d, type = "central")
+    
+    # 8. Return the average marginal effect (AME) for this bootstrap sample
+    mean(deriv_df$.derivative, na.rm = TRUE)
+  })
+}
+
+get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, binary_outcome = TRUE, n_cores = 12, n_boot = 100) {
+  require(mgcv)
+  require(gratia)
+  
+  # Build formula
+  formula <- as.formula(
+    paste0(
+      outcome, " ~ ",
+      paste0("s(", predictors, ")", collapse = " + "),
+      if (!is.null(fe_vars)) paste0(" + ", paste0(fe_vars, collapse = " + ")) else ""
+    )
+  )
+  
+  if (binary_outcome) {
+    # create a df where all predictors are scaled
+    df_std <- df 
+    df_std <- df_std %>%
+      mutate(across(all_of(predictors), ~ as.numeric(scale(.)), .names = "{.col}"))
+    
+    formula_null <- as.formula(paste0(outcome, " ~ 1"))
+    family_gam <- binomial()
+  } else {
+    # create a df where all predictors and the outcome are scaled
+    df_std <- df 
+    df_std <- df_std %>%
+      mutate(across(all_of(c(predictors, outcome)), ~ as.numeric(scale(.)), .names = "{.col}"))
+    
+    family_gam <- gaussian()
+  }
+  
+  # Fit GAM models
+  # model_unstd <- mgcv::gam(formula, data = df, family = family_gam, method = "REML")
+  # summary(model_unstd)
+  model_std   <- mgcv::gam(formula, data = df_std, family = family_gam, method = "REML")
+  # summary(model_std)
+  # # plot the smooth terms from fitted GAM
+  # draw(model_std)
+  
+  # get clustered bootstrap SE #
+  
+  # Get smooth term names
+  smooth_names <- gratia::smooths(model_std)
+  # smooth_names <- smooth_names[grepl("s(f_", smooth_names, fixed = T)] # focus on factors
+  
+  # determine clusters for bootstrapping
+  cluster_var <- interaction(df[[cluster_vars[1]]], df[[cluster_vars[2]]], drop = TRUE)
+  clusters <- unique(cluster_var)
+  
+  # Set up parallel processing before calling
+  library(future.apply)
+  plan(multisession, workers = n_cores)
+  
+  # Loop over each smooth term sequentially
+  boot_results <- lapply(seq_along(smooth_names), function(i) {
+    smooth_name <- smooth_names[i]
+    cat("Starting bootstrap for", smooth_name, "...\n")
+    start_time <- Sys.time()
+    
+    # Parallel bootstrap for this smooth
+    boot_stats <- boot_ame_parallel(
+      smooth_name = smooth_name,
+      data = df_std,               # full data frame
+      clusters = clusters,         # Vector of unique cluster IDs
+      cluster_var = cluster_var,   # Cluster assignment for each row
+      predictors = predictors,     # Continuous predictors
+      fe_vars = fe_vars,           # Categorical predictors
+      outcome = outcome,           # Outcome variable name
+      family_gam = family_gam,     # GAM family
+      n_boot = n_boot              # Number of bootstrap samples
+    )
+    
+    end_time <- Sys.time()
+    elapsed <- end_time - start_time
+    cat("Bootstrap for", smooth_name, "took", elapsed, ".\n")
+    
+    SE <- sd(boot_stats)
+    # Get AME for the original data
+    deriv_df <- derivatives(model_std, select = smooth_name, data = df_std, type = "central")
+    AME <- mean(deriv_df$.derivative, na.rm = TRUE)
+    z <- AME / SE
+    p <- 2 * (1 - pnorm(abs(z)))
+    data.frame(smooth = smooth_name, AME = AME, SE = SE, z = z, p = p, duration = elapsed)
+  })
+  
+  
+  # Combine results 
+  effect_table <- do.call(rbind, boot_results)
+  
+  # End parallel processing
+  plan(sequential)
+  
+  
+  # summary table for all smooth terms in GAM
+  # CAVERAT: These statistics do not account for the clustered structure of the data
+  s_tab <- summary(model_std)$s.table
+  
+  # edf (effective degrees of freedom) shows how complex or “wiggly” the fitted smooth is 
+  # for each continuous predictor—values near 1 mean nearly linear, higher values mean more non-linear.
+  
+  # Ref.df (reference degrees of freedom) is the value used for the F-test of each smooth, 
+  # reflecting the maximum flexibility allowed for the smooth term.
+  
+  s_tab <- as.data.frame(s_tab)
+  names(s_tab)[3:4] <- c("F_value", "p_value")
+  s_tab$smooth <- row.names(s_tab)
+  row.names(s_tab) <- NULL
+  
+  # first derivatives of all smooths using central finite differences
+  deriv_df <- derivatives(model_std, data = df_std, type = "central")
+  ame <- deriv_df %>% 
+    group_by(.smooth) %>%
+    summarise(
+      mean_ME = mean(.derivative, na.rm = T),
+      sd_ME = sd(.derivative, na.rm = T),
+      min_ME = min(.derivative, na.rm = T),
+      max_ME = max(.derivative, na.rm = T),
+    ) %>%
+    rename(smooth = .smooth)
+  
+  # combine all data
+  coef <- merge(s_tab, effect_table, all = T)
+  coef <- merge(coef, ame, all = T)
+  coef$predictor <- gsub("s(", "", coef$smooth, fixed = T)
+  coef$predictor <- gsub(")", "", coef$predictor, fixed = T)
+  
+  # Combine into one table
+  result_table <- data.frame(
+    outcome = outcome,
+    predictor = predictors)
+  result_table <- merge(result_table, coef)
+  
+  # Rank (used/total)
+  result_table$rank_used <- summary(model_std)$rank
+  result_table$rank_total <- summary(model_std)$np
+  result_table$rank_str <- paste0("Rank: ", rank_used, "/", round(rank_total))
+  
+  # Adjusted R-squared
+  result_table$adj_r2 <- summary(model_std)$r.sq
+  
+  # Deviance explained
+  result_table$dev_explained <- summary(model_std)$dev.expl * 100  # as percentage
+  
+  # Scale estimate
+  result_table$scale_est <- summary(model_std)$scale
+  
+  # Number of observations
+  result_table$n_obs <- summary(model_std)$n
+  
+  # distribution and link to use in fitting
+  result_table$family <- family_gam$family
+  result_table$link <- family_gam$link
+  
+  # bootstrap info
+  result_table$n_cores <- n_cores
+  result_table$n_boot <- n_boot
+  
+  # model formula
+  result_table$formula = rep(paste(as.character(formula)[2], "~", as.character(formula)[3]), length(predictors))
+  
+  
+  return(result_table)
+}

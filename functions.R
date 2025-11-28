@@ -941,7 +941,7 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   # Loop over each smooth term sequentially
   boot_results <- lapply(seq_along(smooth_names), function(i) {
     smooth_name <- smooth_names[i]
-    cat("Starting bootstrap for", smooth_name, "...\n")
+    message(cat("Starting bootstrap for", smooth_name, "...\n"))
     start_time <- Sys.time()
     
     # Parallel bootstrap for this smooth
@@ -959,7 +959,7 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
     
     end_time <- Sys.time()
     elapsed <- end_time - start_time
-    cat("Bootstrap for", smooth_name, "took", elapsed, ".\n")
+    message(cat("Bootstrap for", smooth_name, "took", elapsed, ".\n"))
     
     SE <- sd(boot_stats)
     # Get AME for the original data

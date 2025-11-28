@@ -959,7 +959,7 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
     
     end_time <- Sys.time()
     elapsed <- end_time - start_time
-    message(cat("Bootstrap for", smooth_name, "took", elapsed, ".\n"))
+    message(cat("Bootstrap for", smooth_name, "took", as.numeric(elapsed, units = "mins"), "minutes.\n"))
     
     SE <- sd(boot_stats)
     # Get AME for the original data
@@ -1020,8 +1020,7 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   # Rank (used/total)
   result_table$rank_used <- summary(model_std)$rank
   result_table$rank_total <- summary(model_std)$np
-  result_table$rank_str <- paste0("Rank: ", rank_used, "/", round(rank_total))
-  
+
   # Adjusted R-squared
   result_table$adj_r2 <- summary(model_std)$r.sq
   

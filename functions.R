@@ -179,7 +179,6 @@ plot_histogram <- function(data = df,
   
 }
 
-
 # Helper function for residuals-based partial correlation
 partial_correlation_residuals <- function(df, outcome, predictor, controls) {
   formula_y <- as.formula(
@@ -811,35 +810,6 @@ unique_predictor_contributions <- function(df, outcome, predictors, fe_vars = NU
     results[[p]]$df_lr = lr_test$Df[2]
   }
   do.call(rbind, results)
-}
-
-# Function to compute AME for a smooth term for a bootstrap sample
-boot_ame <- function(data, # input data
-                     indices, # Indices of clusters to sample (provided by boot)
-                     smooth_name) # name of the smooth term you want the AME for
-{
-  # Samples clusters (e.g. school-year pairs) rather than individual rows
-  sampled_clusters <- unique(cluster_var)[indices]
-  rows <- which(cluster_var %in% sampled_clusters)
-  d <- droplevels(data[rows, ])
-  
-  # Get all factor variables in d
-  factor_vars <- names(Filter(is.factor, d))
-  
-  # Identify which factor variables have only one level
-  one_level_factors <- factor_vars[sapply(d[factor_vars], function(x) nlevels(x) < 2)]
-  
-  # Remove categorical variables with only one level in d
-  cat_vars_boot <- setdiff(fe_vars, one_level_factors)
-  
-  # Rebuild formula
-  rhs <- paste(c(paste0("s(", predictors, ")"), cat_vars_boot), collapse = " + ")
-  new_formula <- as.formula(paste(outcome, "~", rhs))
-  
-  # Fit model on the bootstrap sample
-  m <- mgcv::gam(new_formula, data = d, family = family_gam, method = "REML")
-  deriv_df <- derivatives(m, select = smooth_name, data = d, type = "central")
-  mean(deriv_df$.derivative, na.rm = TRUE)
 }
 
 boot_ame_parallel <- function(

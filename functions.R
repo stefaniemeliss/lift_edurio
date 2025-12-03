@@ -179,6 +179,130 @@ plot_histogram <- function(data = df,
   
 }
 
+# Helper function to check if a variable is binary (0/1)
+is_binary <- function(x) {
+  vals <- na.omit(unique(x))
+  length(vals) == 2 && all(vals %in% c(0, 1))
+}
+
+# Main function
+cluster_corr_matrix <- function(df, cluster_vars, standardise = FALSE) {
+  # Identify numeric variables in the data frame
+  num_vars <- names(df)[sapply(df, is.numeric)]
+  n_vars <- length(num_vars)
+  
+  # Initialise matrices for correlations, p-values, and n_obs
+  cor_mat <- matrix(NA, nrow = n_vars, ncol = n_vars)
+  p_mat <- matrix(NA, nrow = n_vars, ncol = n_vars)
+  n_mat <- matrix(NA, nrow = n_vars, ncol = n_vars)
+  
+  # Set row and column names
+  rownames(cor_mat) <- colnames(cor_mat) <- num_vars
+  rownames(p_mat) <- colnames(p_mat) <- num_vars
+  rownames(n_mat) <- colnames(n_mat) <- num_vars
+  
+  # Optionally standardise non-binary numeric variables
+  df_std <- df
+  if (standardise) {
+    for (v in num_vars) {
+      if (!is_binary(df[[v]])) {
+        df_std[[v]] <- scale(df[[v]])
+      }
+    }
+  }
+  
+  # Loop over all pairs of numeric variables
+  for (i in seq_len(n_vars)) {
+    for (j in seq_len(n_vars)) {
+      x <- df_std[[num_vars[i]]]
+      y <- df_std[[num_vars[j]]]
+      cl1 <- df[[cluster_vars[1]]]
+      cl2 <- df[[cluster_vars[2]]]
+      
+      # Identify complete cases for this pair and clustering variables
+      complete <- complete.cases(x, y, cl1, cl2)
+      n_obs <- sum(complete)
+      
+      # Only fill upper triangle and diagonal (matrix is symmetric)
+      if (j >= i) {
+        if (n_obs > 2) {
+          # Prepare data frame of complete cases
+          df_sub <- data.frame(
+            x = x[complete],
+            y = y[complete],
+            cl1 = cl1[complete],
+            cl2 = cl2[complete]
+          )
+          df_sub$cl3 <- interaction(df_sub$cl1, df_sub$cl2)
+          
+          # Check if both variables are binary
+          bin_x <- is_binary(df_sub$x)
+          bin_y <- is_binary(df_sub$y)
+          
+          if (bin_x && bin_y) {
+            # Binary-binary: use phi coefficient and chi-squared p-value
+            tab <- table(df_sub$x, df_sub$y)
+            cor_val <- suppressWarnings(cor(df_sub$x, df_sub$y))
+            p_val <- suppressWarnings(chisq.test(tab)$p.value)
+          } else {
+            # Otherwise: use regression and cluster-robust SEs for p-value
+            model <- lm(y ~ x, data = df_sub)
+            cluster_list <- list(df_sub$cl1, df_sub$cl2, df_sub$cl3)
+            vcov_cl <- sandwich::vcovCL(model, cluster = cluster_list)
+            test <- lmtest::coeftest(model, vcov_cl)
+            cor_val <- suppressWarnings(cor(df_sub$x, df_sub$y))
+            p_val <- test["x", "Pr(>|t|)"]
+          }
+        } else {
+          # Not enough data to compute correlation
+          cor_val <- NA
+          p_val <- NA
+        }
+        # Fill both upper and lower triangle for symmetry
+        cor_mat[i, j] <- cor_val
+        p_mat[i, j] <- p_val
+        n_mat[i, j] <- n_obs
+        cor_mat[j, i] <- cor_val
+        p_mat[j, i] <- p_val
+        n_mat[j, i] <- n_obs
+      }
+    }
+  }
+  
+  # --- Adjust p-values for multiple testing in the upper triangle only ---
+  upper_mask <- upper.tri(p_mat, diag = FALSE)
+  pvals_vec <- p_mat[upper_mask]
+  # Benjamini-Hochberg FDR adjustment
+  pvals_adj_vec <- p.adjust(pvals_vec, method = "BH")
+  # Build matrix of adjusted p-values
+  pvals_adj_mat <- matrix(NA, nrow = nrow(p_mat), ncol = ncol(p_mat))
+  rownames(pvals_adj_mat) <- rownames(p_mat)
+  colnames(pvals_adj_mat) <- colnames(p_mat)
+  pvals_adj_mat[upper_mask] <- pvals_adj_vec
+  
+  # --- Filtered correlation matrix: only significant correlations in upper triangle ---
+  filtered_cor_mat <- cor_mat
+  # Set upper triangle to NA where adjusted p >= 0.05
+  filtered_cor_mat[upper_mask & !(pvals_adj_mat < 0.05)] <- NA
+  # Optionally set diagonal to NA (uncomment if desired)
+  # diag(filtered_cor_mat) <- NA
+  
+  # --- Add sample size (n) to row and column names ---
+  # For each outcome (column), get the first non-missing n_obs value
+  n_per_outcome <- apply(n_mat, 2, function(x) x[which(!is.na(x))[1]])
+  new_names <- paste0(colnames(filtered_cor_mat), " (n = ", n_per_outcome, ")")
+  colnames(filtered_cor_mat) <- new_names
+  rownames(filtered_cor_mat) <- new_names
+  
+  # --- Return all outputs as a list ---
+  return(list(
+    correlation = cor_mat,            # Raw correlation matrix
+    p_value = p_mat,                  # Raw p-value matrix
+    n_obs = n_mat,                    # Matrix of pairwise n_obs
+    correlation_filtered = filtered_cor_mat # Filtered correlation matrix with n in row/col names
+  ))
+}
+
 # Helper function for residuals-based partial correlation
 partial_correlation_residuals <- function(df, outcome, predictor, controls) {
   formula_y <- as.formula(

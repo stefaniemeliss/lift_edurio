@@ -32,7 +32,7 @@ review_lookup_mappings <- function(lookup_table = column_lookup) {
 }
 
 # Create the reverse lookup function
-#  transforms column lookup table from its current structure into a format 
+# transforms column lookup table from its current structure into a format 
 # that's optimized for fast column name standardisation.
 create_reverse_lookup <- function(lookup_table) {
   reverse_lookup <- list()
@@ -1280,3 +1280,76 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
 
   return(result_table)
 }
+
+run_dominance_analysis <- function(df, df_loo, outcome, predictors, binary_outcome = T){
+  
+  require(dominanceanalysis)
+  
+  # Build the formula string
+  formula <- as.formula(paste0(outcome, " ~ ", paste0(predictors, collapse = " + ")))
+  
+  #### raw ####
+  
+  # Fit linear regression
+  if (binary_outcome) {
+    fit_raw <- glm(formula = formula, data = df, family = binomial())
+    index = "r2.n" # pseudo R2 (Nagelkerke)
+  } else {
+    fit_raw <- lm(formula = formula, data = df)
+    index = "r2"
+  }
+  
+  # Conduct dominance analysis - using all predictors akin to the [g]lm() model
+  da_raw <- dominanceAnalysis(fit_raw, fit.functions = index)
+  
+  # Get relative contributions
+  # average contribution is the same as general dominance
+  # general dominance statistic for each predictor = 
+  # The average additional contribution to model fit (e.g. R²) across all possible subset models and model sizes.
+  # this is the same as plot(da_raw, which.graph = "general")[["data"]][["value"]]
+  # same as colMeans(da_raw$contribution.by.level$r2[-1]) == summary(da_raw)$r2$average.contribution
+  contr_abs <- da_raw$contribution.average[[index]]
+  contr_tot <- sum(contr_abs)
+  contr_rel <- contr_abs / contr_tot
+  
+  # save dominance data data
+  raw <- data.frame(
+    data = "raw",
+    outcome = outcome,
+    predictor = names(contr_abs),
+    contr_abs = contr_abs,
+    contr_rel = contr_rel,
+    row.names = NULL)
+  
+  #### loo ####
+  
+  # Fit linear regression
+  if (binary_outcome) {
+    fit_loo <- glm(formula = formula, data = df_loo, family = binomial())
+  } else {
+    fit_loo <- lm(formula = formula, data = df_loo)
+  }
+  
+  # Conduct dominance analysis - using all predictors akin to the [g]lm() model
+  da_loo <- dominanceAnalysis(fit_loo, fit.functions = index)
+  
+  # Get relative contributions
+  contr_abs <- da_loo$contribution.average[[index]]
+  contr_tot <- sum(contr_abs)
+  contr_rel <- contr_abs / contr_tot
+  
+  # save dominance data data
+  loo <- data.frame(
+    data = "loo",
+    outcome = outcome,
+    predictor = names(contr_abs),
+    contr_abs = contr_abs,
+    contr_rel = contr_rel,
+    row.names = NULL)
+  
+  ### combine ####
+  out <- rbind(raw, loo)
+  return(out)
+  
+}
+

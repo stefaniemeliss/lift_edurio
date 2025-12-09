@@ -1,0 +1,305 @@
+---
+title: "EFA Edurio data"
+author: "Stefanie Meliss"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#### SETUPS ####
+library(psych)
+library(kableExtra)
+
+source(file = list.files(path = "..", pattern = "setup.R", recursive = T, full.names = T))
+
+# read in data
+df <- read.csv(file = file.path(dir_data, "tmp_data_edurio.csv"))
+
+# get master survey key
+matched <- read.csv(file.path(dir_misc, "01_check_edurio_survey_items_matched.csv"), fileEncoding = "UTF-8")
+survey_key <- read.csv(file.path(dir_misc, "02_process_edurio_survey_key.csv"), fileEncoding = "UTF-8")
+
+# limit to most recent 
+key <- survey_key[survey_key$year == max(survey_key$year), ]
+
+# remove all job satisfaction questions from FA
+key <- key[! grepl("job", key$standard_name), ]
+
+# re-code items #
+
+# extract binary and ordinary items
+i_bin <- key$standard_name[key$scale == "binary"]
+i_ord <- key$standard_name[key$scale == "ordinal"]
+
+# determine list of items were "Not applicable" needs to be re-coded
+items <- key$standard_name[grepl("Not applicable", key$ops)]
+length(items)
+
+# For each item, set *_ans to NA where *_txt is "Not applicable"
+for (item in items) {
+  ans_col <- paste0(item, "_ans")
+  txt_col <- paste0(item, "_txt")
+  df[, ans_col][df[, txt_col] == "Not applicable"] <- NA
+}
+
+# identify ordinary items to re-code, so that higher values indicate more positive workplace attitudes
+items <- paste0(key$standard_name[key$scale == "ordinal" & ! grepl("1", key$ops)], "_ans")
+# recode items
+df[, items] <- apply(df[, items], 2, function(x){ifelse(is.na(x), NA, 6 - x)})
+
+# identify binary items to re-code so that 1 indicates positive workplace and 0 negative workplace
+items <- paste0(key$standard_name[key$scale == "binary"], "_ans")
+# recode items
+df[, items] <- apply(df[, items], 2, function(x){ifelse(is.na(x), NA, x - 1)})
+
+# define the two sets of items
+items_all <- key$standard_name
+items_2018 <- intersect(items_all, survey_key$standard_name[survey_key$year == 2018])
+
+```
+
+
+```{r working_chunk, echo=FALSE, eval=F}
+# # debug #
+# year = 2024
+# items = items_all
+
+# get data
+df_efa <- df[df$year %in% year, paste0(items, "_ans")]
+
+# shorten variable names
+names(df_efa) <- gsub("_ans", "", names(df_efa))
+
+# check binary items: count percentage of respondents that selected "No" (coded as 1, Yes coded as 0)
+tmp <- colSums(df_efa[intersect(items, i_bin)])/nrow(df_efa)
+kbl(data.frame(as.list(tmp)), digits = 3, caption = "Proportion of respondents that selected 'No'") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All items with more than 90% of responses in one category are removed.") %>%
+  print()
+
+# identify items with more than 90% of responses in one category
+i_tmp <- names(which(colSums(df_efa[intersect(items, i_bin)])/nrow(df_efa) > .9))
+# remove those items
+df_efa[, i_tmp] <- NULL
+
+
+# examine missing data proportions #
+
+# item level
+describe(colSums(is.na(df_efa))/nrow(df_efa)) %>% 
+  kbl(., digits = 3, caption = "Proportion of missing data per item") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All items with more than 10% of missing responses (i.e., 'Not applicable') are removed.") %>%
+  print()
+# remove all items with more than 10% missing data
+df_efa <- df_efa[, colSums(is.na(df_efa))/nrow(df_efa) <= 0.1]
+
+# respondent level
+describe(rowSums(is.na(df_efa))/ncol(df_efa)) %>% 
+  kbl(., digits = 3, caption = "Proportion of missing data per respondent") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All respondents with more than 25% of missing responses (i.e., 'Not applicable') are removed.") %>%
+  print()
+# remove all respondents with more than 20% missing data
+df_efa <- df_efa[rowSums(is.na(df_efa))/ncol(df_efa) <= 0.25, ]
+
+# print to markdown
+cat("N =", nrow(df_efa), "responses from k = ", ncol(df_efa), "items were included in the EFA.\n\n")
+
+# # check for sparsity
+# 
+# # No items are extremely sparse: 
+# # All response options have at least a few hundred responses
+# # unlikely to have a severe sparsity issue.
+# lapply(df_efa, table, useNA = "ifany")
+
+# Compute the polychoric correlation matrix
+# default na.rm=TRUE --> pairwise deletion 
+poly_cor <- polychoric(df_efa, global = F, correct = 0)$rho
+
+# Assess suitability for factor analysis
+# check the Kaiser-Meyer-Olkin (KMO) measure and Bartlett’s test using the polychoric correlation matrix.
+
+# KMO > 0.6 is considered acceptable.
+cat("Kaiser-Meyer-Olkin (KMO) factor adequacy\n\n")
+cat("Overall MSA =", round(KMO(poly_cor)$MSA, digits = 3), "\n\n\n\n")
+describe(KMO(poly_cor)$MSAi) %>% 
+  kbl(., digits = 3, caption = "Item-level KMO factor adequacy") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All items with KMO below 0.6 are removed.") %>%
+  print()
+# remove all respondents with more than 20% missing data
+df_efa <- df_efa[, KMO(poly_cor)$MSAi > .6]
+
+
+# Bartlett’s test lets you rule out that the variables in the data set are essentially uncorrelated.
+# Bartlett’s test should be significant (p < 0.05).
+cat("Bartlett’s test for sphericity\n\n")
+bart <- cortest.bartlett(df_efa)
+cat("ChiSquare(", bart$df, ", N = ", nrow(df_efa), ") = ", round(bart$chisq, digits = 2), ", p = ", round(bart$p.value, digits = 3), "\n\n", sep = "")
+
+# Decide the number of factors using a scree plot and parallel analysis
+
+# generate scree plot
+scree(poly_cor, pc = F)
+cat("There are", sum(eigen(poly_cor)$values > 1), "eigenvalues larger than 1.\n\n")
+
+# Run parallel analysis
+res_minres <- fa.parallel(df_efa, fa = "fa", cor = "poly", use = "pairwise", correct = 0, 
+                          fm = "minres", main = "Parallel Analysis Scree Plots [MINRES]") # minimum residual factor method
+res_pa <- fa.parallel(df_efa, fa = "fa", cor = "poly", use = "pairwise", correct = 0, 
+                      fm = "pa", main = "Parallel Analysis Scree Plots [PA]") # principal factor solution factor method
+
+# Extract the suggested number of factors
+n_minres <- res_minres$nfact
+n_pa <- res_pa$nfact
+
+cut_thresh <- .3
+
+if (length(year) > 1) subtrahend <- c(0:2) else subtrahend <- c(0)
+
+if (n_minres == n_pa) {
+  # run EFA 
+  # use minres as factoring method
+  # apply three different oblique rotations
+  
+  for (i in subtrahend) {
+    
+    n_fact <- n_minres - i
+    cat("\n#### Extract", n_fact, "factors\n\n")
+    
+    
+    # Oblimin rotation #
+    rot = "oblimin"
+    
+    # run Exploratory Factor analysis
+    fa <- fa(df_efa, cor = "poly", use = "pairwise", correct = 0, 
+             nfactors = n_fact, fm = "minres", 
+             rotate = rot)
+    
+    # plot loadings [abs(loading) > .3]
+    fa.diagram(fa, main = paste(rot, "Factor Analysis"),
+               cut = cut_thresh,
+               rsize = 1, e.size = 0.1, digits = 2)
+    
+    # extract factor loadings and make DF
+    load <- as.data.frame(unclass(round(fa$loadings, digits = 3)))
+    # Create a logical vector indicating which rows meet the condition
+    idx <- which(rowSums(load > .3) > 1)
+    
+    # add loadings to markdown
+    load  %>%
+      mutate(across(everything(), ~cell_spec(.x, bold = .x > cut_thresh))) %>%
+      mutate(communality = round(fa$communality, digits = 3)) %>%
+      mutate(communality = cell_spec(communality, color = ifelse(communality < cut_thresh, "red", "black"))) %>%
+      kbl(escape = F, caption = paste(rot, "Factor loadings")) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+      row_spec(idx, italic = T, color = "grey") %>%
+      print()
+    
+    
+    # Promax rotation #
+    rot = "promax"
+    
+    # run Exploratory Factor analysis
+    fa <- fa(df_efa, cor = "poly", use = "pairwise", correct = 0, 
+             nfactors = n_fact, fm = "minres", 
+             rotate = rot)
+    
+    # plot loadings [abs(loading) > .3]
+    fa.diagram(fa, main = paste(rot, "Factor Analysis"),
+               cut = cut_thresh,
+               rsize = 1, e.size = 0.1, digits = 2)
+    
+    # extract factor loadings and make DF
+    load <- as.data.frame(unclass(round(fa$loadings, digits = 3)))
+    # Create a logical vector indicating which rows meet the condition
+    idx <- which(rowSums(load > .3) > 1)
+    
+    # add loadings to markdown
+    load  %>%
+      mutate(across(everything(), ~cell_spec(.x, bold = .x > cut_thresh))) %>%
+      mutate(communality = round(fa$communality, digits = 3)) %>%
+      mutate(communality = cell_spec(communality, color = ifelse(communality < cut_thresh, "red", "black"))) %>%
+      kbl(escape = F, caption = paste(rot, "Factor loadings")) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+      row_spec(idx, italic = T, color = "grey") %>%
+      print()
+    
+    
+    # GeominQ rotation #
+    rot = "geominQ"
+    
+    # run Exploratory Factor analysis
+    fa <- fa(df_efa, cor = "poly", use = "pairwise", correct = 0, 
+             nfactors = n_fact, fm = "minres", 
+             rotate = rot)
+    
+    # plot loadings [abs(loading) > .3]
+    fa.diagram(fa, main = paste(rot, "Factor Analysis"),
+               cut = cut_thresh,
+               rsize = 1, e.size = 0.1, digits = 2)
+    
+    # extract factor loadings and make DF
+    load <- as.data.frame(unclass(round(fa$loadings, digits = 3)))
+    # Create a logical vector indicating which rows meet the condition
+    idx <- which(rowSums(load > .3) > 1)
+    
+    # add loadings to markdown
+    load  %>%
+      mutate(across(everything(), ~cell_spec(.x, bold = .x > cut_thresh))) %>%
+      mutate(communality = round(fa$communality, digits = 3)) %>%
+      mutate(communality = cell_spec(communality, color = ifelse(communality < cut_thresh, "red", "black"))) %>%
+      kbl(escape = F, caption = paste(rot, "Factor loadings")) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+      row_spec(idx, italic = T, color = "grey") %>%
+      print()
+    
+  }
+  
+}
+```
+
+## Maximum number of items
+
+```{r, echo = F, results='asis', fig.align='center', warning=FALSE}
+items = items_all
+
+year = setdiff(periods$year, 2018)
+cat("###", periods$academic_year[nrow(periods)-1], "-", periods$academic_year[1], "\n\n")
+# run chunk
+<<working_chunk>>
+
+for (i in seq_along(periods$year)) {
+  year <- periods$year[i]
+  if (year != 2018) {
+    cat("###", periods$academic_year[i], "\n\n")
+    # run chunk
+    <<working_chunk>>
+  }
+}
+```
+
+## Maximum number of years
+
+```{r, echo = F, results='asis', fig.align='center', warning=FALSE}
+items = items_2018
+
+year = periods$year
+cat("###", periods$academic_year[nrow(periods)], "-", periods$academic_year[1], "\n\n")
+# run chunk
+<<working_chunk>>
+
+for (i in seq_along(periods$year)) {
+  year <- periods$year[i]
+  cat("###", periods$academic_year[i], "\n\n")
+  # run chunk
+  <<working_chunk>>
+}
+```

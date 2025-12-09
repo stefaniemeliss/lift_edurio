@@ -1,0 +1,312 @@
+---
+title: "EFA Edurio data"
+author: "Stefanie Meliss"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#### SETUPS ####
+source(file = list.files(path = "..", pattern = "setup.R", recursive = T, full.names = T))
+library(psych)
+library(kableExtra)
+
+
+# read in data
+df <- read.csv(file = file.path(dir_data, "tmp_data_edurio.csv"))
+
+# get master survey key
+matched <- read.csv(file.path(dir_misc, "01_check_edurio_survey_items_matched.csv"), fileEncoding = "UTF-8")
+survey_key <- read.csv(file.path(dir_misc, "02_process_edurio_survey_key.csv"), fileEncoding = "UTF-8")
+
+# limit to most recent 
+key <- survey_key[survey_key$year == max(survey_key$year), ]
+
+# remove all job satisfaction questions from FA
+key <- key[! grepl("job", key$standard_name), ]
+
+# re-code items #
+
+# extract binary and ordinary items
+i_bin <- key$standard_name[key$scale == "binary"]
+i_ord <- key$standard_name[key$scale == "ordinal"]
+
+# determine list of items were "Not applicable" needs to be re-coded
+items <- key$standard_name[grepl("Not applicable", key$ops)]
+length(items)
+
+# For each item, set *_ans to NA where *_txt is "Not applicable"
+for (item in items) {
+  ans_col <- paste0(item, "_ans")
+  txt_col <- paste0(item, "_txt")
+  df[, ans_col][df[, txt_col] == "Not applicable"] <- NA
+}
+
+# identify ordinary items to re-code, so that higher values indicate more positive workplace attitudes
+items <- paste0(key$standard_name[key$scale == "ordinal" & ! grepl("1", key$ops)], "_ans")
+# recode items
+df[, items] <- apply(df[, items], 2, function(x){ifelse(is.na(x), NA, 6 - x)})
+
+# identify binary items to re-code so that 1 indicates positive workplace and 0 negative workplace
+items <- paste0(key$standard_name[key$scale == "binary"], "_ans")
+# recode items
+df[, items] <- apply(df[, items], 2, function(x){ifelse(is.na(x), NA, x - 1)})
+
+# define the two sets of items
+items_all <- key$standard_name
+items_2018 <- intersect(items_all, survey_key$standard_name[survey_key$year == 2018])
+items_fin <- c("q_beh_01", items_2018)
+
+
+```
+
+
+```{r prep, echo=FALSE, eval=F}
+# get data
+df_efa <- df[, paste0(items, "_ans")]
+
+# shorten variable names
+names(df_efa) <- gsub("_ans", "", names(df_efa))
+
+# get index
+idx <- which(names(df_efa) == "q_beh_01")
+
+# check binary items: count percentage of respondents that selected "No" (coded as 1, Yes coded as 0)
+tmp <- colSums(df_efa[intersect(items, i_bin)])/nrow(df_efa)
+kbl(data.frame(as.list(tmp)), digits = 3, caption = "Proportion of respondents that selected 'No'") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All items with more than 90% of responses in one category are removed.") %>%
+  print()
+
+# identify items with more than 90% of responses in one category
+i_tmp <- names(which(colSums(df_efa[intersect(items, i_bin)])/nrow(df_efa) > .9))
+# remove those items
+df_efa[, i_tmp] <- NULL
+
+# examine missing data proportions #
+
+# item level: sum of all NA
+describe(colSums(is.na(df_efa[, -idx]))/nrow(df_efa[, -idx])) %>% 
+  kbl(., digits = 3, caption = caption) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All items with more than 10% of missing responses (i.e., 'Not applicable') are removed.") %>%
+  print()
+# remove all items with more than 10% missing data
+df_efa[, -idx] <- df_efa[, -idx][, colSums(is.na(df_efa[, -idx]))/nrow(df_efa[, -idx]) <= 0.1]
+
+# respondent level
+describe(rowSums(is.na(df_efa))/ncol(df_efa)) %>% 
+  kbl(., digits = 3, caption = "Proportion of missing data per respondent") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All respondents with more than 25% of missing responses (i.e., 'Not applicable') are removed.") %>%
+  print()
+# remove all respondents with more than 25% missing data
+df_efa <- df_efa[rowSums(is.na(df_efa))/ncol(df_efa) <= 0.25, ]
+
+
+# print to markdown
+cat("N =", nrow(df_efa), "responses from k = ", ncol(df_efa), "items were included in the EFA.\n\n")
+
+
+
+# Compute the polychoric correlation matrix
+# default na.rm=TRUE --> pairwise deletion 
+poly_cor <- polychoric(df_efa, global = F, correct = 0)$rho
+
+# Assess suitability for factor analysis
+# check the Kaiser-Meyer-Olkin (KMO) measure and Bartlett’s test using the polychoric correlation matrix.
+
+# KMO > 0.6 is considered acceptable.
+cat("Kaiser-Meyer-Olkin (KMO) factor adequacy\n\n")
+cat("Overall MSA =", round(KMO(poly_cor)$MSA, digits = 3), "\n\n\n\n")
+describe(KMO(poly_cor)$MSAi) %>% 
+  kbl(., digits = 3, caption = "Item-level KMO factor adequacy") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  footnote("All items with KMO below 0.6 are removed.") %>%
+  print()
+# remove all respondents with more than 20% missing data
+df_efa <- df_efa[, KMO(poly_cor)$MSAi > .6]
+
+
+# Bartlett’s test lets you rule out that the variables in the data set are essentially uncorrelated.
+# Bartlett’s test should be significant (p < 0.05).
+cat("Bartlett’s test for sphericity\n\n")
+bart <- cortest.bartlett(df_efa)
+cat("ChiSquare(", bart$df, ", N = ", nrow(df_efa), ") = ", round(bart$chisq, digits = 2), ", p = ", round(bart$p.value, digits = 3), "\n\n", sep = "")
+
+# Run parallel analysis
+res_minres <- fa.parallel(df_efa, fa = "fa", cor = "poly", use = "pairwise", correct = 0, 
+                          fm = "minres", main = "Parallel Analysis Scree Plots [MINRES]") # minimum residual factor method
+```
+
+```{r efa, echo=FALSE, eval=F}
+cut_thresh <- .3
+
+# Oblimin rotation #
+rot = "oblimin"
+
+# run Exploratory Factor analysis
+# When specifying missing = TRUE with impute = "none", the fa() function computes factor scores based on the available (non-missing) items for each participant rather than imputing values. Essentially, scores are calculated from the mean of the observed items weighted by the factor scoring coefficients.
+fa <- fa(df_efa, cor = "poly", use = "pairwise", correct = 0, 
+         nfactors = 4, fm = "minres", 
+         missing = T, impute = "none",
+         rotate = rot)
+
+fa
+
+# plot loadings [abs(loading) > .3]
+fa.diagram(fa, main = paste(rot, "Factor Analysis"),
+           cut = cut_thresh,
+           rsize = 1, e.size = 0.1, digits = 2)
+```
+
+```{r load, echo=FALSE, eval=F}
+# extract factor loadings and make DF
+load <- as.data.frame(unclass(round(fa$loadings, digits = 2)))
+
+# add column containing item name
+load$item <- row.names(load)
+#row.names(load) <- NULL
+
+# sort columns
+load <- load[, sort(names(load))]
+
+# Find the factor with the highest loading for each item
+factor_names <- names(load)[-1]
+max_loading <- apply(load[, factor_names], 1, max)
+max_factor_index <- apply(load[, factor_names], 1, which.max)
+
+# Only assign items where the strongest loading exceeds the threshold
+assigned_items <- load$item[max_loading >= cut_thresh]
+assigned_factors <- factor_names[max_factor_index[max_loading >= cut_thresh]]
+
+# Create a list to hold items for each factor
+factor_items <- lapply(factor_names, function(f) {assigned_items[assigned_factors == f]})
+
+# export items for each factor
+for (f in 1:length(factor_items)) {
+  assign(paste0("f", f), factor_items[[f]])
+}
+
+# Create a logical vector indicating which rows meet the condition
+idx <- which(rowSums(load[match(unlist(mget(paste0("f", 1:length(factor_items))), use.names = F), load$item), -1] >= cut_thresh) > 1)
+
+# add loadings to markdown
+load  %>%
+  mutate(across(where(is.numeric), ~cell_spec(.x, bold = .x >= cut_thresh))) %>%
+  mutate(communality = round(fa$communality, digits = 2)) %>%
+  mutate(communality = cell_spec(communality, color = ifelse(communality < cut_thresh, "red", "black"))) %>%
+  arrange(match(item, c(f1, f2, f3, f4))) %>%
+  kbl(escape = F, caption = paste(rot, "Factor loadings"), row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  row_spec(idx, italic = T, color = "grey") %>%
+  print()
+```
+
+```{r alpha, echo=FALSE, eval=F}
+for (f in 1:length(factor_items)) {
+  if (length(get(paste0("f", f))) > 1) {
+    cat("Estimate Cronbach's alpha for F", f, "\n", sep = "")
+    print(psych::alpha(df_efa[, get(paste0("f", f))]))
+    cat("\n\n")
+  }
+}
+```
+
+
+## Maximum number of years (2018/19 - 2023/24) 
+
+```{r prep_2018, echo = F, fig.align='center', results='asis'}
+items <- items_2018
+caption = "Proportion of missing data per item"
+# run chunk to prepare data
+<<prep>>
+```
+
+```{r efa_2018, echo = F, fig.align='center'}
+# run chunk to run efa
+<<efa>>
+```
+
+
+### Evaluate factor solution: Export factor loadings
+
+```{r load_2018, echo = F, results='asis', fig.align='center', warning=FALSE}
+# run chunk to export loadings
+<<load>>
+```
+
+### Consistency: Cronbach's alpha
+
+```{r alpha_2018, echo = F}
+<<alpha>>
+```
+
+
+## Maximum number of years (2018/19 - 2023/24) + q_beh_01 - q_sup_02
+
+```{r prep_fin, echo = F, fig.align='center', results='asis'}
+items <- setdiff(items_fin, "q_sup_02")
+caption = "Proportion of missing data per item (excl. q_behav_01)"
+# run chunk to prepare data
+<<prep>>
+
+```
+
+```{r efa_fin, echo = F, fig.align='center'}
+# run chunk to run efa
+<<efa>>
+```
+
+### Evaluate factor solution: Export factor loadings
+
+```{r load_fin, echo = F, results='asis', fig.align='center', warning=FALSE}
+# run chunk to export loadings
+<<load>>
+
+# sort rows and columns
+load <- load[match(c(f1, f2, f3, f4), load$item), sort(names(load))]
+
+# print with 3 digits after comma
+load[-1] <- apply(load[-1], 2, function(x){sprintf("%.2f", x)})
+
+
+# run Exploratory Factor analysis
+fa <- fa(df_efa[, c(f1, f2, f3, f4)], cor = "poly", use = "pairwise", correct = 0, 
+         nfactors = 4, fm = "minres", 
+         rotate = rot)
+
+# re-organise factors
+fa <- fa.organize(fa, o = order(colnames(fa$loadings)), cn = c("F 1", "F 2", "F 3", "F 4"))
+
+# plot diagram in correct order
+fa.diagram(fa, main = "",
+           sort = F, 
+           cut = cut_thresh,
+           rsize = 1, e.size = 0.1, digits = 2)
+
+# Save loadings as CSV
+load %>%
+  left_join(., key[, c("standard_name", "quest")], by = join_by(item == standard_name)) %>%
+  mutate(item = paste0(item, ". ", sub("\\n.*", "", quest))) %>%
+  select(-quest) %>%
+  tibble::add_row(item = "Factor 4: Career opportunities", .after = length(f1) + length(f2) + length(f3)) %>%
+  tibble::add_row(item = "Factor 3: Collegial support", .after = length(f1) + length(f2)) %>%
+  tibble::add_row(item = "Factor 2: Pupil behaviour", .after = length(f1)) %>%
+  tibble::add_row(item = "Factor 1: Leadership", .before = 1) %>%
+  write.csv(file = paste0(file_stem, "_factorloadings.csv"), row.names = F, na = "")
+
+```
+
+### Consistency: Cronbach's alpha
+
+```{r alpha_fin, echo = F}
+<<alpha>>
+```
+

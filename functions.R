@@ -1129,7 +1129,7 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   
   # Get smooth term names
   smooth_names <- gratia::smooths(model_std)
-  # smooth_names <- smooth_names[grepl("s(f_", smooth_names, fixed = T)] # focus on factors
+  smooth_names <- smooth_names[grepl("s(f_", smooth_names, fixed = T)] # focus on factors
   
   # determine clusters for bootstrapping
   cluster_var <- interaction(df_std[[cluster_vars[1]]], df_std[[cluster_vars[2]]], drop = TRUE)

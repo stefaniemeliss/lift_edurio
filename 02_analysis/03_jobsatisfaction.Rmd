@@ -1,0 +1,331 @@
+---
+title: "Stability of Edurio job satisfaction measures"
+author: "Stefanie Meliss"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#### SETUPS ####
+source(file = list.files(path = "..", pattern = "setup.R", recursive = T, full.names = T))
+library(psych)
+library(kableExtra)
+
+# read in data
+df_teach <- read.csv(file = file.path(dir_data, "data_edurio.csv"))
+
+df <- df_teach %>%
+  # list all ID vars to maintain in DF
+  group_by(establishmentname, urn, laestab, phaseofeducation, year, time_period, academic_year)  %>% 
+  # shorten school names
+  mutate(establishmentname = gsub(" (An Aet Academy)", "", establishmentname, fixed = T),
+         establishmentname = gsub(" Academy", "", establishmentname)) %>%
+  # re-code resign variable, so that smaller numbers means less considerations of resigning
+  mutate(q_job_03_ans = 6 - q_job_03_ans) %>%
+  # apply min-max scaling to harmonise inconsistent response scales
+  mutate(q_job_01_ans = 
+           ifelse(year == 2018, (q_job_01_ans - 0) / (10 - 0),
+                  ifelse(year != 2018, (q_job_01_ans - 1) / (10 - 1),
+                         NA))
+  ) %>% 
+  # aggregate
+  summarise(
+    # N of respndents per school and year
+    respondents = n(),
+    # mean response on recommendation as a place to work (1 to 10)
+    mean_recomm = mean(q_job_01_ans, na.rm = T), 
+    median_recomm = median(q_job_01_ans, na.rm = T), 
+    # mean response on how often teachers considered resigning
+    mean_resign = mean(q_job_03_ans, na.rm = T),
+    median_resign = median(q_job_03_ans, na.rm = T),
+    # N of respondents for resign follow up (followed up if resign %in% c("Constantly", "Often", "Sometimes"))
+    n_resign_followup = ifelse(sum(is.na(q_job_04_ans)) == n(), NA, sum(!is.na(q_job_04_ans))),
+    # N of respondents indicating they would remain in profession
+    remain = ifelse(sum(is.na(q_job_04_ans)) == n(), NA, sum(q_job_04_txt == "Remain in the profession", na.rm = T)),
+    # N of respondents indicating they would leave profession
+    leave = ifelse(sum(is.na(q_job_04_ans)) == n(), NA, sum(q_job_04_txt == "Leave the profession", na.rm = T)),
+    .groups = "drop")
+
+```
+
+
+
+```{r by_year, echo=FALSE, eval=F}
+
+# compute descriptives per year
+table_desc(data = df, group_var = group_var, dep_var = dep_var)
+
+# create histogram all years (not shown) #
+plt <- plot_histogram(data = df, 
+                      xvar = dep_var,
+                      title = paste("Histograms for each academic year"),
+                      xlab = y_lab, 
+                      bin_width = bin_width,
+                      xlower = x_min,
+                      xupper = x_max)
+
+# histogram for each year #
+plt_grp <- plt + 
+  facet_wrap(. ~ get(group_var), ncol = 2) +
+  geom_vline(data = df %>% group_by(academic_year) %>% summarise(dv = mean(get(dep_var))), mapping = aes(xintercept = dv), color = teal, size = 1) +
+  labs(caption = "Note. Dashed coral line = mean all years; solid teal line = mean specific year.")
+plt_grp
+```
+
+```{r school_ts, echo=FALSE, eval=F}
+
+cat("\n\nSchools were grouped into four quantiles according to the variability (standard deviation) of their timeseries data. Timeseries data is plotted for each quantile.\n\n")
+# compute aaverage by school
+out <- rbind(
+  do.call("rbind",psych::describeBy(df[, dep_var], group = df[, "establishmentname"]))
+)
+# calculate Coefficient of variation (CV)
+# standardised measure of dispersion showing the extent of variability in relation to the mean of the data 
+out$CV <- out$sd / out$mean * 100
+# calculate signal-to-noise ratio (SNR)
+# measure of how large the typical value (mean) is compared to the typical variation (SD)
+out$SNR <- out$mean / out$sd
+
+# assign quantiles to SD
+out$quantile_SD <- as.numeric(cut_number(out$sd, 4))
+
+# add school names as vars
+out$vars <- row.names(out)
+
+for (q in 1:4) {
+  
+  # subset data for each quantile
+  tmp <- df[df$establishmentname %in% out$vars[out$quantile_SD == q], ]
+  
+  # plot overall time series
+  plt <- ggplot(data = tmp, aes(x = academic_year, y = get(dep_var), group = establishmentname, col= establishmentname)) +
+    geom_point() + 
+    geom_line() + 
+    ylab(paste(y_lab)) +
+    xlab(x_lab) +
+    labs(title = paste0(q, ". Quantile of variability"), 
+         caption = paste("Quantile boundaries of school-level SD:", levels(cut_number(out$sd, 4))[q])) +
+    coord_cartesian(ylim = c(x_min, x_max)) +
+    scale_colour_manual(
+      values = as.vector(pals::glasbey(length(unique(tmp$establishmentname)))),
+      labels = scales::label_wrap(14)) +
+    ambition_theme + 
+    theme(legend.position = "right",  
+          legend.text = element_text(size = 8),
+          legend.title = element_blank(),
+          legend.key.size = unit(.5, 'cm'),
+          #legend.margin =margin(r=10,l=5,t=5,b=5),
+          axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(plt)
+  
+}
+
+cat("\n\nSchool-level timeseries were computed for all schools. For each school, descriptive statistics such as the mean and standard deviation were calculated to summarise the timeseries data. These school-level summary statistics were then aggregated across the sample, and further descriptive statistics (e.g.,mean and SD) were calculated for these summary measures. This approach provides an overview of the distribution and variability of timeseries characteristics across schools, enabling comparison and identification of between-school patterns.\n\n")
+
+# get descriptives of school-level averages
+out2 <- rbind(
+  psych::describe(out[, "mean"]), # get descriptives of school-level average
+  psych::describe(out[, "median"]), # get descriptives of school-level sd
+  psych::describe(out[, "sd"]), # get descriptives of school-level sd
+  psych::describe(out[, "min"]), # get descriptives of school-level sd
+  psych::describe(out[, "max"]), # get descriptives of school-level sd
+  psych::describe(out[, "range"]), # get descriptives of school-level sd
+  psych::describe(out[, "CV"]), # get descriptives of school-level sd
+  psych::describe(out[, "SNR"]) # get descriptives of school-level sd
+)
+# make school-level averages identifiable
+out2$vars <- c("TS mean", "TS median", "TS SD", "TS min", "TS max", "TS range", "TS CV", "TS SNR")
+# select relevant columns
+out2 <- out2[, c("vars", "mean", "median", "sd", "min", "max", "range")]
+
+# print output
+kbl(out2, caption = paste("Distribution of school-level timeseries descriptives ", dep_var), digits = 3, row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), fixed_thead = T) %>%
+  row_spec(c(3,6:8), bold = T ) %>%
+  print()
+
+
+cat("\n\n#### MAT-level timeseries data\n\n")
+
+# compute yearly average
+out <- rbind(
+  do.call("rbind",psych::describeBy(df[, dep_var], group = df[, group_var]))
+)
+out[, group_var] <- row.names(out)
+# plot yearly average
+plt <- ggplot(data = out, aes(x = academic_year, y = mean)) +
+  geom_point(size = 3) + 
+  geom_errorbar(aes(ymin = mean-1.96*se, ymax = mean+1.96*se), width=.2,
+                position=position_dodge(.9)) +
+  geom_line(group = 1) + 
+  ambition_theme + theme(legend.position = "none",  
+                         axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab(paste(y_lab)) +
+  xlab(x_lab) +
+  coord_cartesian(ylim = c(min(df[, dep_var]), max(df[, dep_var]))) +
+  labs(title = "MAT-level average", caption = "Error bars represent 95% CI.")
+print(plt)
+
+
+```
+
+
+
+
+## How likely are you to recommend your workplace as a good place to work?
+
+Participants answered ‘How likely are you to recommend AET as a good place to work?’ on a 0–10 scale in 2018/19 and a 1–10 scale in 2019/20 - 2023/24. To ensure comparability, we standardised all responses using min-max scaling:  
+  
+Standardised score = (response – minimum) / (maximum – minimum)  
+  
+This rescaled scores to a 0–1 range for longitudinal analysis.
+
+### Aggregate teacher-level data using mean values
+
+#### Responses given in each academic year
+
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# define DV and label
+group_var = "academic_year"
+x_lab = "Academic years"
+dep_var = "mean_recomm"
+y_lab = "Mean likelihood of recommendation"
+
+x_min = 0
+x_max = 1.1
+bin_width = 0.05
+<<by_year>>
+
+```
+
+#### School-level timeseries data
+
+<details>
+<summary>Descriptives of each school-level timeseries</summary>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# Compute descriptives per school (i.e., timeseries)
+table_desc(data = df, group_var = "establishmentname", dep_var = dep_var)
+```
+
+</details>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+<<school_ts>>
+```
+
+
+### Aggregate teacher-level data using median values
+
+#### Responses given in each academic year
+
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# define DV and label
+dep_var = "median_recomm"
+y_lab = "Median likelihood of recommendation"
+
+<<by_year>>
+
+```
+
+#### School-level timeseries data
+
+<details>
+<summary>Descriptives of each school-level timeseries</summary>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# Compute descriptives per school (i.e., timeseries)
+table_desc(data = df, group_var = "establishmentname", dep_var = dep_var)
+```
+
+</details>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+<<school_ts>>
+```
+
+
+
+
+
+
+
+
+
+
+## In the past three months, how often have you considered resigning from your post?
+
+Participants answered ‘In the past three months, how often have you considered resigning from your post?’ on a 1-5 scale (5 = "Constantly", 4 = "Often", 3 = "Sometimes", 2 = "Rarely", 1 = "Never").
+
+
+### Aggregate teacher-level data using mean values
+
+#### Responses given in each academic year
+
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# define DV and label
+dep_var = "mean_resign"
+y_lab = "Mean resignation considerations"
+x_min = 1
+x_max = 5
+bin_width = 0.5
+<<by_year>>
+
+```
+
+#### School-level timeseries data
+
+<details>
+<summary>Descriptives of each school-level timeseries</summary>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# Compute descriptives per school (i.e., timeseries)
+table_desc(data = df, group_var = "establishmentname", dep_var = dep_var)
+```
+
+</details>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+<<school_ts>>
+```
+
+
+### Aggregate teacher-level data using median values
+
+#### Responses given in each academic year
+
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# define DV and label
+dep_var = "median_resign"
+y_lab = "Median resignation considerations"
+<<by_year>>
+
+```
+
+#### School-level timeseries data
+
+<details>
+<summary>Descriptives of each school-level timeseries</summary>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+# Compute descriptives per school (i.e., timeseries)
+table_desc(data = df, group_var = "establishmentname", dep_var = dep_var)
+```
+
+</details>
+
+```{r, echo = F, results='asis',fig.align='center', warning=FALSE}
+<<school_ts>>
+```
+

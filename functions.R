@@ -1300,7 +1300,7 @@ run_dominance_analysis <- function(df, df_loo, outcome, predictors, binary_outco
   }
   
   # Conduct dominance analysis - using all predictors akin to the [g]lm() model
-  da_raw <- dominanceAnalysis(fit_raw, fit.functions = index)
+  da_raw <- dominanceAnalysis(fit_raw)
   
   # Get relative contributions
   # average contribution is the same as general dominance
@@ -1331,7 +1331,7 @@ run_dominance_analysis <- function(df, df_loo, outcome, predictors, binary_outco
   }
   
   # Conduct dominance analysis - using all predictors akin to the [g]lm() model
-  da_loo <- dominanceAnalysis(fit_loo, fit.functions = index)
+  da_loo <- dominanceAnalysis(fit_loo)
   
   # Get relative contributions
   contr_abs <- da_loo$contribution.average[[index]]

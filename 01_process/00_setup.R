@@ -3,6 +3,7 @@
 # Clear the workspace and run garbage collection
 rm(list = ls())
 gc()
+set.seed(123)
 
 # load libraries
 library(dplyr)
@@ -71,8 +72,8 @@ dir_in <- gsub("code/lift_edurio", "research_projects/2025_Q2_Lift_edurio/data",
 if (! dir.exists(dir_data)) dir.create(dir_data)
 if (! dir.exists(dir_misc)) dir.create(dir_misc)
 
-# get file stem name
-file_stem <- get_file_stem()
+# get file stem name and file directory
+get_file_info()
 
 # copy DfE data #
 files <- list.files(path = file.path(gsub("lift_edurio", "DfE_Data", dir_data)), pattern = ".csv")
@@ -88,11 +89,13 @@ lift <- read.csv(file.path(dir_data, "data_gias_estab.csv"), na.strings = "")
 
 # select cols
 cols <- c("urn", "laestab", "establishmentname", "opendate",
+          "typeofestablishment",
           "phaseofeducation", "statutorylowage", "statutoryhighage", "nurseryprovision", "officialsixthform",
-          "gender", "numberofpupils", "percentagefsm", "senpru", "boarders", "religiouscharacter", "admissionspolicy",
+          "gender", "senpru", "specialclasses", "boarders", "religiouscharacter", "admissionspolicy",
           "urbanrural", "la", "gor")
 
 # select rows
+# lift <- lift[!is.na(lift$group_uid) & lift$group_uid == 2053, ]
 lift <- lift[!is.na(lift$group_uid) & lift$group_uid == 2053, cols]
 
 # get Edurio data #

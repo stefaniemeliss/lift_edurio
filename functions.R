@@ -1281,7 +1281,7 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   return(result_table)
 }
 
-run_dominance_analysis <- function(df, df_loo, outcome, predictors, binary_outcome = T){
+run_dominance_analysis <- function(df, df_loo, outcome, predictors, matrices = c("complete", "conditional", "general"), binary_outcome = T){
   
   require(dominanceanalysis)
   
@@ -1312,7 +1312,7 @@ run_dominance_analysis <- function(df, df_loo, outcome, predictors, binary_outco
   contr_tot <- sum(contr_abs)
   contr_rel <- contr_abs / contr_tot
   
-  # save dominance data data
+  # save contributions data
   raw <- data.frame(
     data = "raw",
     outcome = outcome,
@@ -1338,7 +1338,7 @@ run_dominance_analysis <- function(df, df_loo, outcome, predictors, binary_outco
   contr_tot <- sum(contr_abs)
   contr_rel <- contr_abs / contr_tot
   
-  # save dominance data data
+  # save contributions data
   loo <- data.frame(
     data = "loo",
     outcome = outcome,
@@ -1349,7 +1349,41 @@ run_dominance_analysis <- function(df, df_loo, outcome, predictors, binary_outco
   
   ### combine ####
   out <- rbind(raw, loo)
-  return(out)
+  
+  ### Get dominance matrices ###
+  for (m in 1:length(matrices)) {
+    
+    matrix = matrices[m]
+    
+    # extract matrix RAW
+    m_raw <- as.data.frame(dominanceMatrix(da_raw, type = matrix))
+    
+    # format matrix RAW
+    m_raw$data <- "raw"
+    m_raw$outcome <- outcome
+    m_raw$dominance <- matrix
+    m_raw$predictor <- row.names(m_raw)
+    row.names(m_raw) <- NULL
+    
+    # extract matrix LOO
+    m_loo <- as.data.frame(dominanceMatrix(da_loo, type = matrix))
+    
+    # format matrix LOO
+    m_loo$data <- "loo"
+    m_loo$outcome <- outcome
+    m_loo$dominance <- matrix
+    m_loo$predictor <- row.names(m_loo)
+    row.names(m_loo) <- NULL
+    
+    # combine 
+    m_tmp <- rbind(m_raw, m_loo)
+    m_tmp <- m_tmp[, c((length(predictors)+1):(length(predictors)+4), 1:length(predictors))]
+    
+    if(m == 1) mat <- m_tmp else mat <- rbind(mat, m_tmp)
+    
+  }
+  
+  return(list(average_contribution = out, dominance_matrix = mat))
   
 }
 

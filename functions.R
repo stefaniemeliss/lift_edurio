@@ -628,12 +628,19 @@ icc_school_year <- function(df, outcome, school_var, year_var, binary_outcome = 
   require(lme4)
   
   # Helper for extracting variance components
-  get_vars <- function(model, var1, var2 = NULL) {
+  get_vars <- function(model, var1, var2 = NULL, binary = FALSE) {
     vc <- VarCorr(model)
     var_list <- list()
     var_list$var1 <- as.numeric(vc[[var1]])
     if (!is.null(var2)) var_list$var2 <- as.numeric(vc[[var2]])
-    var_list$resid <- attr(vc, "sc")^2
+    
+    # KEY CHANGE HERE:
+    if (binary) {
+      var_list$resid <- pi^2 / 3  # Level-1 variance for logistic models
+    } else {
+      var_list$resid <- attr(vc, "sc")^2
+    }
+    
     var_list
   }
   
@@ -649,7 +656,7 @@ icc_school_year <- function(df, outcome, school_var, year_var, binary_outcome = 
       data = df
     )
   }
-  vars_school <- get_vars(model_school, school_var)
+  vars_school <- get_vars(model_school, school_var, binary = binary_outcome)  # Pass binary flag  
   icc_school_only <- vars_school$var1 / (vars_school$var1 + vars_school$resid)
   
   # Model with only year as random effect
@@ -664,7 +671,7 @@ icc_school_year <- function(df, outcome, school_var, year_var, binary_outcome = 
       data = df
     )
   }
-  vars_year <- get_vars(model_year, year_var)
+  vars_year <- get_vars(model_year, year_var, binary = binary_outcome)  # Pass binary flag
   icc_year_only <- vars_year$var1 / (vars_year$var1 + vars_year$resid)
   
   # Model with both school and year as random effects
@@ -679,7 +686,7 @@ icc_school_year <- function(df, outcome, school_var, year_var, binary_outcome = 
       data = df
     )
   }
-  vars_both <- get_vars(model_both, school_var, year_var)
+  vars_both <- get_vars(model_both, school_var, year_var, binary = binary_outcome)  # Pass binary flag
   total_var_both <- vars_both$var1 + vars_both$var2 + vars_both$resid
   icc_school_both <- vars_both$var1 / total_var_both
   icc_year_both   <- vars_both$var2 / total_var_both

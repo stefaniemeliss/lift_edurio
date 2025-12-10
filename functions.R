@@ -947,8 +947,13 @@ boot_ame_parallel <- function(
     family_gam,     # GAM family (e.g. gaussian(), binomial())
     n_boot,         # Number of bootstrap samples
     n_cores,        # Number of cores used
-    binary_outcome  # Logical
+    binary_outcome, # Logical
+    save_dir        # Directory
 ) {
+  
+  # Ensure save_dir exists
+  if (!dir.exists(save_dir)) dir.create(save_dir, recursive = TRUE)
+  
   # Run bootstrap iterations in parallel
   # future_sapply runs each bootstrap iteration in parallel
   future_sapply(1:n_boot, function(i) {
@@ -1012,6 +1017,15 @@ boot_ame_parallel <- function(
     # 9. Return the average marginal effect (AME) for this bootstrap sample
     mean(deriv_df$.derivative, na.rm = TRUE)
   })
+  
+  # Save results as .csv file
+  save_path <- file.path(save_dir, paste0(file_stem, "_bootstrap_", outcome, "_", smooth_name, ".csv"))
+  # Save as a data frame with one column
+  boot_df <- data.frame(bootstrap_AME = boot_stats)
+  write.csv(boot_df, save_path, row.names = FALSE)
+  
+  # Return the boot_stats as usual
+  return(boot_stats)
 }
 
 summarise_gam <- function(gam_model) {
@@ -1062,7 +1076,7 @@ summarise_gam <- function(gam_model) {
 }
 
 get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, binary_outcome = TRUE, 
-                                  n_cores = 12, n_boot = 100, min_cluster_size = 5) {
+                                  n_cores = 12, n_boot = 100, min_cluster_size = 5, save_dir = file.path(file_dir, "tmp")) {
   require(mgcv)
   require(gratia)
   require(future.apply)
@@ -1215,7 +1229,8 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
         family_gam = family_gam,
         n_boot = n_boot,
         n_cores = n_cores,
-        binary_outcome = binary_outcome
+        binary_outcome = binary_outcome,
+        save_dir = save_dir
       )
       
       # time process
@@ -1358,6 +1373,13 @@ run_dominance_analysis <- function(df, df_loo, outcome, predictors, matrices = c
     # extract matrix RAW
     m_raw <- as.data.frame(dominanceMatrix(da_raw, type = matrix))
     
+    if(binary_outcome){
+      # focus on Nagelkerke
+      m_raw <- m_raw[, grepl(index, names(m_raw))]
+      # rename cols
+      names(m_raw) <- gsub(paste0(index, "."), "", names(m_raw))
+    } 
+    
     # format matrix RAW
     m_raw$data <- "raw"
     m_raw$outcome <- outcome
@@ -1367,6 +1389,13 @@ run_dominance_analysis <- function(df, df_loo, outcome, predictors, matrices = c
     
     # extract matrix LOO
     m_loo <- as.data.frame(dominanceMatrix(da_loo, type = matrix))
+    
+    if(binary_outcome){
+      # focus on Nagelkerke
+      m_loo <- m_loo[, grepl(index, names(m_loo))]
+      # rename cols
+      names(m_loo) <- gsub(paste0(index, "."), "", names(m_loo))
+    } 
     
     # format matrix LOO
     m_loo$data <- "loo"

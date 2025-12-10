@@ -954,12 +954,8 @@ boot_ame_parallel <- function(
     family_gam,     # GAM family (e.g. gaussian(), binomial())
     n_boot,         # Number of bootstrap samples
     n_cores,        # Number of cores used
-    binary_outcome, # Logical
-    save_dir        # Directory
+    binary_outcome  # Logical
 ) {
-  
-  # Ensure save_dir exists
-  if (!dir.exists(save_dir)) dir.create(save_dir, recursive = TRUE)
   
   # Run bootstrap iterations in parallel
   # future_sapply runs each bootstrap iteration in parallel
@@ -1025,14 +1021,6 @@ boot_ame_parallel <- function(
     mean(deriv_df$.derivative, na.rm = TRUE)
   })
   
-  # Save results as .csv file
-  save_path <- file.path(save_dir, paste0(file_stem, "_bootstrap_", outcome, "_", smooth_name, ".csv"))
-  # Save as a data frame with one column
-  boot_df <- data.frame(bootstrap_AME = boot_stats)
-  write.csv(boot_df, save_path, row.names = FALSE)
-  
-  # Return the boot_stats as usual
-  return(boot_stats)
 }
 
 summarise_gam <- function(gam_model) {
@@ -1214,6 +1202,9 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   # Set up parallel processing before calling
   plan(multisession, workers = n_cores)
   
+  # Ensure save_dir exists
+  if (!dir.exists(save_dir)) dir.create(save_dir, recursive = TRUE)
+  
   # Loop over each smooth term sequentially
   boot_results <- lapply(seq_along(smooth_names), function(i) {
 
@@ -1236,9 +1227,19 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
         family_gam = family_gam,
         n_boot = n_boot,
         n_cores = n_cores,
-        binary_outcome = binary_outcome,
-        save_dir = save_dir
+        binary_outcome = binary_outcome
       )
+      
+      # Save results as .csv file
+      tryCatch({
+        write.csv(
+          boot_stats,
+          file = file.path(save_dir, paste0(file_stem, "_bootstrap_", outcome, "_", smooth_name, ".csv")),
+          row.names = FALSE
+        )
+      }, error = function(e) {
+        message(paste("Failed to save CSV for", smooth_name, ":", e$message))
+      })
       
       # time process
       end_time <- Sys.time()

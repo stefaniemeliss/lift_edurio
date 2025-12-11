@@ -5,6 +5,10 @@ library(psych)
 library(kableExtra)
 library(lmerTest)
 
+# script level flow vars #
+run_da <- FALSE
+run_gam <- TRUE
+
 # read in data
 data <- read.csv(file = file.path(dir_data, "data_all.csv"))
 
@@ -170,79 +174,84 @@ out_lm <- data.frame(
 )
 cols <- names(out_lm)
 
-out_boot <- data.frame(
-  predictor = character(),
-  outcome   = character(),
-  category = character(),
-  model = character(),
-  family    = character(),   
-  link      = character(),
-  clustering = character(),
-  smooth    = character(),
-  edf       = numeric(),
-  Ref.df    = numeric(),
-  F_value   = numeric(),
-  p_value   = numeric(),
-  mean_ME   = numeric(),
-  sd_ME     = numeric(),
-  min_ME    = numeric(),
-  max_ME    = numeric(),
-  rank_used = numeric(),
-  rank_total = numeric(),
-  adj_r2    = numeric(),
-  dev_explained = numeric(),
-  scale_est = numeric(),
-  n_obs     = numeric(),
-  n_clust   = numeric(),
+if (run_gam) {
+  out_boot <- data.frame(
+    predictor = character(),
+    outcome   = character(),
+    category = character(),
+    model = character(),
+    family    = character(),   
+    link      = character(),
+    clustering = character(),
+    smooth    = character(),
+    edf       = numeric(),
+    Ref.df    = numeric(),
+    F_value   = numeric(),
+    p_value   = numeric(),
+    mean_ME   = numeric(),
+    sd_ME     = numeric(),
+    min_ME    = numeric(),
+    max_ME    = numeric(),
+    rank_used = numeric(),
+    rank_total = numeric(),
+    adj_r2    = numeric(),
+    dev_explained = numeric(),
+    scale_est = numeric(),
+    n_obs     = numeric(),
+    n_clust   = numeric(),
+    
+    edf_boot  = numeric(),
+    Ref.df_boot    = numeric(),
+    F_value_boot   = numeric(),
+    p_value_boot   = numeric(),
+    mean_ME_boot   = numeric(),
+    sd_ME_boot     = numeric(),
+    min_ME_boot    = numeric(),
+    max_ME_boot    = numeric(),
+    rank_used_boot = numeric(),
+    rank_total_boot = numeric(),
+    adj_r2_boot    = numeric(),
+    dev_explained_boot = numeric(),
+    scale_est_boot = numeric(),
+    n_obs_boot     = numeric(),
+    n_clust_boot   = numeric(),
+    n_boot    = numeric(),
+    n_success = numeric(),
+    n_cores   = numeric(),
+    AME       = numeric(),
+    SE        = numeric(),
+    ci_l      = numeric(),
+    ci_u      = numeric(),
+    z         = numeric(),
+    p         = numeric(),
+    duration  = difftime(numeric(0), numeric(0)),
+    formula   = character(),
+    stringsAsFactors = F
+  )
+}
+
+if (run_da) {
+  out_da <- data.frame(
+    data = character(),
+    outcome = character(),
+    predictor = character(),
+    contr_abs = numeric(),
+    contr_rel = numeric(),
+    row.names = NULL)
   
-  edf_boot  = numeric(),
-  Ref.df_boot    = numeric(),
-  F_value_boot   = numeric(),
-  p_value_boot   = numeric(),
-  mean_ME_boot   = numeric(),
-  sd_ME_boot     = numeric(),
-  min_ME_boot    = numeric(),
-  max_ME_boot    = numeric(),
-  rank_used_boot = numeric(),
-  rank_total_boot = numeric(),
-  adj_r2_boot    = numeric(),
-  dev_explained_boot = numeric(),
-  scale_est_boot = numeric(),
-  n_obs_boot     = numeric(),
-  n_clust_boot   = numeric(),
-  n_boot    = numeric(),
-  n_success = numeric(),
-  n_cores   = numeric(),
-  AME       = numeric(),
-  SE        = numeric(),
-  ci_l      = numeric(),
-  ci_u      = numeric(),
-  z         = numeric(),
-  p         = numeric(),
-  duration  = difftime(numeric(0), numeric(0)),
-  formula   = character(),
-  stringsAsFactors = F
-)
-
-out_da <- data.frame(
-  data = character(),
-  outcome = character(),
-  predictor = character(),
-  contr_abs = numeric(),
-  contr_rel = numeric(),
-  row.names = NULL)
-
-out_mat <- data.frame(
-  data = character(),
-  outcome = character(),
-  dominance = character(),
-  predictor = character(),
-  row.names = NULL)
-
-preds_da <- c(grp, yr, controls_cont, controls_cat, factors)
-
-for (i in 1:length(preds_da)) {
-  out_mat[, preds_da[i]] <- numeric()
+  out_mat <- data.frame(
+    data = character(),
+    outcome = character(),
+    dominance = character(),
+    predictor = character(),
+    row.names = NULL)
+  
+  preds_da <- c(grp, yr, controls_cont, controls_cat, factors)
+  
+  for (i in 1:length(preds_da)) {
+    out_mat[, preds_da[i]] <- numeric()
+  }
+  
 }
 
 clust_name <- c("school RE + year RE", "school RE + year FE", "school FE + year FE")
@@ -265,7 +274,16 @@ for (outcome in scores) {
   # Add clusters
   df$clusters <- interaction(df[[grp]], df[[yr]], drop = TRUE)
   
-  # extract ICC #
+  # extract ICC for factor scores #
+  if(outcome == scores[1]){
+    for (f in 1:length(factors)) {
+      tmp <- icc_school_year(df, outcome = factors[f], school_var = grp, year_var = yr)
+      # combine results
+      out_icc <- rbind.all.columns(out_icc, tmp)
+    }
+  }
+  
+  # extract ICC for outcomes #
   if (! outcome %in% bin){
     tmp <- icc_school_year(df, outcome = outcome, school_var = grp, year_var = yr)
   } else {
@@ -334,7 +352,6 @@ for (outcome in scores) {
   tmp$n_obs <- nrow(df)
   out_lm <- rbind.all.columns(out_lm, tmp)
   
-  
   #### control variables + 'working environment' variables "entered together" + school FE + year FE ####
   
   if (! outcome %in% bin) {
@@ -395,49 +412,55 @@ for (outcome in scores) {
   
   #### Dominance analysis (control variables + 'working environment' variables "entered together" + school FE + year FE) ####
   
-  if (! outcome %in% bin) {
+  if (run_da) {
+    if (! outcome %in% bin) {
+      
+      tmp <- run_dominance_analysis(df = df, df_loo = df_loo, 
+                                    outcome = outcome,
+                                    predictors = preds_da,
+                                    matrices = c("complete", "conditional", "general"),
+                                    binary_outcome = F)
+      
+    } else {
+      
+      tmp <- run_dominance_analysis(df = df, df_loo = df_loo, 
+                                    outcome = outcome,
+                                    predictors = preds_da,
+                                    matrices = c("complete", "conditional", "general"),
+                                    binary_outcome = T)
+      
+    }
     
-    tmp <- run_dominance_analysis(df = df, df_loo = df_loo, 
-                                  outcome = outcome,
-                                  predictors = preds_da,
-                                  matrices = c("complete", "conditional", "general"),
-                                  binary_outcome = F)
-    
-  } else {
-    
-    tmp <- run_dominance_analysis(df = df, df_loo = df_loo, 
-                                  outcome = outcome,
-                                  predictors = preds_da,
-                                  matrices = c("complete", "conditional", "general"),
-                                  binary_outcome = T)
-    
+    out_da <- rbind.all.columns(out_da, tmp$average_contribution)
+    out_mat <- rbind.all.columns(out_mat, tmp$dominance_matrix)
   }
-  
-  out_da <- rbind.all.columns(out_da, tmp$average_contribution)
-  out_mat <- rbind.all.columns(out_mat, tmp$dominance_matrix)
   
   #### Non-parametric regression (control variables + 'working environment' variables "entered together" + school FE + year FE) ####
   
-  if (! outcome %in% bin) {
+  if (run_gam) {
     
-    # school fixed effects, year fixed effect: ALL PREDICTORS
-    tmp <- get_gam_betas_cluster(df = df_loo, outcome = outcome, predictors = c(controls_cont, preds),
-                                 fe_vars = c(controls_cat, grp, yr), cluster_vars = c(grp, yr),
-                                 binary_outcome = F, n_cores = 15, n_boot = 100)
-    tmp$model <- "LOO gam(family = gaussian) with vars entered together + controls + school + year effect"
+    if (! outcome %in% bin) {
+      
+      # school fixed effects, year fixed effect: ALL PREDICTORS
+      tmp <- get_gam_betas_cluster(df = df_loo, outcome = outcome, predictors = c(controls_cont, preds),
+                                   fe_vars = c(controls_cat, grp, yr), cluster_vars = c(grp, yr),
+                                   binary_outcome = F, n_cores = 15, n_boot = 1000)
+      tmp$model <- "LOO gam(family = gaussian) with vars entered together + controls + school + year effect"
+      
+    } else {
+      
+      # school fixed effects, year fixed effect: ALL PREDICTORS
+      tmp <- get_gam_betas_cluster(df = df_loo, outcome = outcome, predictors = c(controls_cont, preds),
+                                   fe_vars = c(controls_cat, grp, yr), cluster_vars = c(grp, yr),
+                                   binary_outcome = T, n_cores = 15, n_boot = 1000)
+      tmp$model <- "LOO gam(family = binomial) with vars entered together + controls + school + year effect"
+      
+    }
     
-  } else {
-    
-    # school fixed effects, year fixed effect: ALL PREDICTORS
-    tmp <- get_gam_betas_cluster(df = df_loo, outcome = outcome, predictors = c(controls_cont, preds),
-                                 fe_vars = c(controls_cat, grp, yr), cluster_vars = c(grp, yr),
-                                 binary_outcome = T, n_cores = 15, n_boot = 100)
-    tmp$model <- "LOO gam(family = binomial) with vars entered together + controls + school + year effect"
+    tmp$clustering <- clust_name[3]
+    out_boot <- rbind.all.columns(out_boot, tmp)
     
   }
-  
-  tmp$clustering <- clust_name[3]
-  out_boot <- rbind.all.columns(out_boot, tmp)
   
 }
 
@@ -464,32 +487,41 @@ out_lm <- out_lm[order(out_lm$idx), cols]
 
 write.csv(out_lm, file = file.path(file_dir, paste0(file_stem, "_lm.csv")), row.names = F)
 write.csv(out_icc, file = file.path(file_dir, paste0(file_stem, "_icc.csv")), row.names = F)
-write.csv(out_da, file = file.path(file_dir, paste0(file_stem, "_da.csv")), row.names = F)
+if (run_da) {
+  write.csv(out_da, file = file.path(file_dir, paste0(file_stem, "_da_contribution.csv")), row.names = F)
+  write.csv(out_mat, file = file.path(file_dir, paste0(file_stem, "_da_dominancematrix.csv")), row.names = F)
+} else {
+  out_da <- read.csv(file = file.path(file_dir, paste0(file_stem, "_da_contribution.csv")))
+  out_mat <- read.csv(file = file.path(file_dir, paste0(file_stem, "_da_dominancematrix.csv")))
+}
 
 ## format gam output ##
-
-# add idx for ordering
-out_boot$idx <- as.numeric(row.names(out_boot))
-
-# create lookup to label predictors
-lookup <- data.frame(
-  predictor = unique(out_boot$predictor))
-lookup$category <- ifelse(lookup$predictor %in% factors, "factor",
-                          ifelse(lookup$predictor %in% controls_cont, "controls_cont",
-                                 ifelse(lookup$predictor %in% controls_cat, "controls_cat", NA)))
-
-# remove category (NAs)
-out_boot$category <- NULL
-
-# combine output with look
-out_boot <- merge(lookup, out_boot)
-
-# order rows
-out_boot <- out_boot[order(out_boot$idx), ]
-out_boot$idx <- NULL
-
-write.csv(out_boot, file = file.path(file_dir, paste0(file_stem, "_gam.csv")), row.names = F)
-
+if (run_gam) {
+  
+  # add idx for ordering
+  out_boot$idx <- as.numeric(row.names(out_boot))
+  
+  # create lookup to label predictors
+  lookup <- data.frame(
+    predictor = unique(out_boot$predictor))
+  lookup$category <- ifelse(lookup$predictor %in% factors, "factor",
+                            ifelse(lookup$predictor %in% controls_cont, "controls_cont",
+                                   ifelse(lookup$predictor %in% controls_cat, "controls_cat", NA)))
+  
+  # remove category (NAs)
+  out_boot$category <- NULL
+  
+  # combine output with look
+  out_boot <- merge(lookup, out_boot)
+  
+  # order rows
+  out_boot <- out_boot[order(out_boot$idx), ]
+  out_boot$idx <- NULL
+  
+  write.csv(out_boot, file = file.path(file_dir, paste0(file_stem, "_gam.csv")), row.names = F)
+} else {
+  out_boot <- read.csv(file = file.path(file_dir, paste0(file_stem, "_gam.csv")), row.names = F)
+}
 #### create output summary table ####
 
 p_to_stars <- function(p) {
@@ -525,7 +557,6 @@ for (s in 1:length(scores)) {
     outcome = scores[s],
     predictor = "Variance explained"
   )
-  
   
   # identify models that were used for this outcome
   models <- unique(out$model)
@@ -639,7 +670,7 @@ tmp <- tmp %>%
     values_from = contr) %>%
   rename(`Dominance\nanalysis\nM4` = raw) %>%
   rename(`Dominance\nanalysis\nM5` = loo)
-  
+
 # add labels - predictors #
 
 # define labels and order
@@ -686,8 +717,6 @@ output <- output %>%
   relocate(Outcome, Predictor, .before = cols[1]) %>%
   arrange(Outcome, Predictor)
 
-
-
 write.csv(output, file = file.path(file_dir, paste0(file_stem, "_out.csv")), row.names = F)
 
 ## format output for paper ##
@@ -707,7 +736,7 @@ insert_positions <- seq(0, n-1, by = x) # not at end
 formatted <- data.frame()  # Start with an empty tibble
 
 for (i in 1:length(insert_positions)) {
-
+  
   # Rows to take from original data
   start <- insert_positions[i] + 1
   end <- min(insert_positions[i] + x, n)
@@ -868,7 +897,7 @@ out_da_abs <- out_da2 %>%
 
 # generate plot
 p <- ggplot(data = out_da_abs, aes(x = data, y = contr_abs, fill = data)) +
-# dodge barplot
+  # dodge barplot
   geom_bar(stat = "identity", position = "dodge", colour = black) + 
   scale_fill_manual(values = c(red, blue)) +
   ggh4x::facet_nested(out_label ~ facet + pred_label, scales = "free") +
@@ -884,11 +913,11 @@ p <- ggplot(data = out_da_abs, aes(x = data, y = contr_abs, fill = data)) +
             size = 4, color = black, vjust = -0.5) +
   # add rank as label
   geom_label(aes(x = data, y = pos_y, label = rank, colour = data),
-            size = 4, label.colour = black,
-            vjust = 1, inherit.aes = FALSE) +
+             size = 4, label.colour = black,
+             vjust = 1, inherit.aes = FALSE) +
   scale_colour_manual(values = c(red, blue))
 p
-  
+
 # save plot
 ggsave(plot = p,
        filename = paste0(file_stem, "_da_abs.jpg"),

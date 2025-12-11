@@ -944,7 +944,7 @@ unique_predictor_contributions <- function(df, outcome, predictors, fe_vars = NU
 }
 
 boot_ame_parallel <- function(
-    smooth_name,    # Name of the smooth term to compute AME for
+    smooth_names,   # Vector of names of the smooth term to compute AME for
     data,           # Full data frame to sample from
     clusters,       # Vector of unique cluster IDs
     cluster_var,    # Vector of cluster assignments for each row in data
@@ -1008,18 +1008,26 @@ boot_ame_parallel <- function(
 
     # 8. Compute derivatives (marginal effects) for the smooth term, with error handling
     deriv_df <- tryCatch(
-      derivatives(fit, select = smooth_name, data = d, type = "central"),
+      derivatives(fit, select = smooth_names, data = d, type = "central"),
       error = function(e) {
         message(sprintf("Bootstrap %d failed: derivative error. Error: %s", i, e$message))
         return(NULL)
       },
       warning = function(w) invokeRestart("muffleWarning")
     )
-    if (is.null(deriv_df) || !(".derivative" %in% names(deriv_df))) return(NA)
+    if (is.null(deriv_df) || !(".derivative" %in% names(deriv_df))) return(rep(NA, length(smooth_names)))
     
     # 9. Return the average marginal effect (AME) for this bootstrap sample
-    mean(deriv_df$.derivative, na.rm = TRUE)
-  })
+    ames <- deriv_df %>%
+      group_by(.smooth) %>%
+      summarise(mean_AME = mean(.derivative, na.rm = TRUE)) %>%
+      # Ensure output order matches smooth_names
+      right_join(data.frame(.smooth = smooth_names), by = ".smooth") %>%
+      pull(mean_AME)
+    
+    names(ames) <- smooth_names
+    ames
+  }, future.seed = TRUE)
   
 }
 
@@ -1138,7 +1146,7 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   
   # Get smooth term names
   smooth_names <- gratia::smooths(model_std)
-  smooth_names <- smooth_names[grepl("s(f_", smooth_names, fixed = T)] # focus on factors
+  # smooth_names <- smooth_names[grepl("s(f_", smooth_names, fixed = T)] # focus on factors
   
   # determine clusters for bootstrapping
   cluster_var <- interaction(df_std[[cluster_vars[1]]], df_std[[cluster_vars[2]]], drop = TRUE)
@@ -1205,101 +1213,103 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   # Ensure save_dir exists
   if (!dir.exists(save_dir)) dir.create(save_dir, recursive = TRUE)
   
-  # Loop over each smooth term sequentially
-  boot_results <- lapply(seq_along(smooth_names), function(i) {
-
-    # time process
-    smooth_name <- smooth_names[i]
-    message(cat("Starting bootstrap for outcome", outcome, "term", smooth_name, "...\n"))
-    start_time <- Sys.time()
+  # Start timing
+  message("Starting bootstrap for outcome ", outcome, " terms ", paste(smooth_names, collapse = ", "), "...\n")
+  start_time <- Sys.time()
+  
+  # Run parallel bootstrap for all smooth terms at once
+  boot_stats <- tryCatch({
+    boot_ame_parallel(
+      smooth_names = smooth_names,
+      data = df_std,
+      clusters = clusters_filtered,
+      cluster_var = cluster_var,
+      predictors = predictors,
+      fe_vars = fe_vars,
+      outcome = outcome,
+      family_gam = family_gam,
+      n_boot = n_boot,
+      n_cores = n_cores,
+      binary_outcome = binary_outcome
+    )
+  }, error = function(e) {
+    message("Bootstrap failed: ", e$message)
+    return(NULL)
+  })
+  
+  end_time <- Sys.time()
+  elapsed <- end_time - start_time
+  message("\tBootstrap for all smooths took ", as.numeric(elapsed, units = "mins"), " minutes.\n")
+  
+  # If boot_stats is NULL, return NAs for all smooths
+  if (is.null(boot_stats)) {
+    boot_results <- data.frame(
+      smooth = smooth_names,
+      AME = NA,
+      SE = NA,
+      ci_l = NA,
+      ci_u = NA,
+      z = NA,
+      p = NA,
+      n_boot = n_boot,
+      n_success = NA,
+      n_cores = n_cores,
+      duration = elapsed
+    )
+  } else {
+    # Transpose so bootstraps are rows, smooths are columns
+    boot_stats_df <- as.data.frame(t(boot_stats))
+    colnames(boot_stats_df) <- rownames(boot_stats)
+    rownames(boot_stats_df) <- NULL
+    boot_stats_df$bootstrap <- seq_len(nrow(boot_stats_df))
     
-    # Use tryCatch to handle errors gracefully
-    result <- tryCatch({
-      # Parallel bootstrap for this smooth
-      boot_stats <- boot_ame_parallel(
-        smooth_name = smooth_name,
-        data = df_std,
-        clusters = clusters_filtered,
-        cluster_var = cluster_var,
-        predictors = predictors,
-        fe_vars = fe_vars,
-        outcome = outcome,
-        family_gam = family_gam,
-        n_boot = n_boot,
-        n_cores = n_cores,
-        binary_outcome = binary_outcome
-      )
-      
-      # Save results as .csv file
-      tryCatch({
-        write.csv(
-          boot_stats,
-          file = file.path(save_dir, paste0(file_stem, "_bootstrap_", outcome, "_", smooth_name, ".csv")),
-          row.names = FALSE
-        )
-      }, error = function(e) {
-        message(paste("Failed to save CSV for", smooth_name, ":", e$message))
-      })
-      
-      # time process
-      end_time <- Sys.time()
-      elapsed <- end_time - start_time
-      message(cat("\t\t\tBootstrap for", smooth_name, "took", as.numeric(elapsed, units = "mins"), "minutes.\n"))
-      
-      # process boot data
-      AME <- mean(boot_stats, na.rm = TRUE)
-      SE <- sd(boot_stats, na.rm = TRUE)
-      ci_l <- quantile(boot_stats, 0.025)
-      ci_u <- quantile(boot_stats, 0.975)
-      z <- AME / SE
-      p <- 2 * (1 - pnorm(abs(z)))
-      n_success <- sum(!is.na(boot_stats))
-
-      # extract results
-      data.frame(
-        smooth = smooth_name,
-        AME = AME,
-        SE = SE,
-        ci_l = ci_l,
-        ci_u = ci_u,
-        z = z,
-        p = p,
-        n_boot = n_boot,
-        n_success = n_success,
-        n_cores = n_cores,
-        duration = elapsed
+    # Save raw bootstrap data
+    tryCatch({
+      write.csv(
+        boot_stats_df,
+        file = file.path(save_dir, paste0(file_stem, "_bootstrap_raw_", outcome, ".csv")),
+        row.names = FALSE
       )
     }, error = function(e) {
-      # If anything fails, return NAs for all stats except smooth name
-      end_time <- Sys.time()
-      elapsed <- end_time - start_time
-      
-      data.frame(
-        smooth = smooth_name,
-        AME = NA,
-        SE = NA,
-        ci_l = NA,
-        ci_u = NA,
-        z = NA,
-        p = NA,
-        n_boot = n_boot,
-        n_success = NA,
-        n_cores = n_cores,
-        duration = elapsed
-      )
+      message("Failed to save CSV: ", e$message)
     })
     
-    result
+    # Convert to long format for summarising
+    boot_long <- tidyr::pivot_longer(boot_stats_df, -bootstrap, names_to = "smooth", values_to = "mean_ME")
+    
+    # Summarise for each smooth
+    boot_results <- boot_long %>%
+      group_by(smooth) %>%
+      summarise(
+        AME = mean(mean_ME, na.rm = TRUE),
+        SE = sd(mean_ME, na.rm = TRUE),
+        ci_l = quantile(mean_ME, 0.025, na.rm = TRUE),
+        ci_u = quantile(mean_ME, 0.975, na.rm = TRUE),
+        z = AME / SE,
+        p = 2 * (1 - pnorm(abs(z))),
+        n_boot = n_boot,
+        n_success = sum(!is.na(mean_ME)),
+        n_cores = n_cores,
+        duration = elapsed,
+        .groups = "drop"
+      )
+  }  
+  # Save results as .csv file
+  tryCatch({
+    write.csv(
+      boot_results,
+      file = file.path(save_dir, paste0(file_stem, "_bootstrap_sum_", outcome, ".csv")),
+      row.names = FALSE
+    )
+  }, error = function(e) {
+    message("Failed to save CSV: ", e$message)
   })
   
   # End parallel processing
   plan(sequential)
   
-  # Combine results
-  effect_table <- do.call(rbind, boot_results)
-  
   # merge with result_table
-  result_table <- merge(result_table, effect_table, all = T)
+  result_table <- merge(result_table, boot_results, all = T)
 
   return(result_table)
 }

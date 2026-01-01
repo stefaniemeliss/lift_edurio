@@ -624,6 +624,62 @@ get_betas_mixed <- function(
   return(result_table)
 }
 
+summarise_school_stats <- function(data, group_vars, vars) {
+  
+  data_name <- deparse(substitute(data))
+  
+  # Step 1: Compute mean and count for each variable in vars, for every group
+  data_summary <- data %>%
+    group_by(across(all_of(group_vars))) %>%
+    summarise(
+      across(all_of(vars),
+             list(mean = ~mean(.x, na.rm = TRUE),
+                  n = ~sum(!is.na(.x))),
+             .names = "{.col}_{.fn}"
+      ),
+      .groups = "drop"
+    )
+  
+  # Step 2: Identify mean and count columns
+  mean_cols <- names(data_summary)[grepl("_mean$", names(data_summary))]
+  n_cols <- names(data_summary)[grepl("_n$", names(data_summary))]
+  
+  # Step 3: Pivot longer for means and counts
+  data_long <- data_summary %>%
+    tidyr::pivot_longer(
+      cols = c(all_of(mean_cols), all_of(n_cols)),
+      names_to = c("variable", ".value"),
+      names_pattern = "(.*)_(mean|n)"
+    )
+  
+  # Step 4: Summarise school-level stats (unweighted and weighted)
+  school_stats <- data_long %>%
+    group_by(variable) %>%
+    summarise(
+      data = data_name,
+      mean_of_means = mean(mean, na.rm = TRUE),
+      sd_of_means = sd(mean, na.rm = TRUE),
+      wtd_mean_of_means = Hmisc::wtd.mean(mean, n),
+      wtd_sd_of_means = sqrt(Hmisc::wtd.var(mean, n)),
+      min_of_means = min(mean, na.rm = TRUE),
+      max_of_means = max(mean, na.rm = TRUE),
+      n_groups = n(),
+      .groups = "drop"
+    )
+  
+  # Return both long data and summary stats
+  return(list(
+    group_means = data_long,
+    summary_stats = school_stats
+  ))
+  
+  # To access results:
+  # group_means <- result$group_means      # Long format: one row per group-variable, with mean and n
+  # summary_stats <- result$summary_stats  # Summary stats: unweighted and weighted for each variable
+  
+}
+
+
 icc_school_year <- function(df, outcome, school_var, year_var, binary_outcome = FALSE) {
   require(lme4)
   

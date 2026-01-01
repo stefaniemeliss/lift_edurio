@@ -628,6 +628,12 @@ summarise_school_stats <- function(data, group_vars, vars) {
   
   data_name <- deparse(substitute(data))
   
+  # Step 0: Compute descriptive stats for each variable in vars, regardless of group
+  data_desc <- do.call(rbind, apply(data[, vars], 2, psych::describe))
+  data_desc$vars <- row.names(data_desc)
+  row.names(data_desc) <- NULL
+  names(data_desc)[-1] <- paste0(names(data_desc)[-1], "_teach")
+  
   # Step 1: Compute mean and count for each variable in vars, for every group
   data_summary <- data %>%
     group_by(across(all_of(group_vars))) %>%
@@ -657,15 +663,20 @@ summarise_school_stats <- function(data, group_vars, vars) {
     group_by(variable) %>%
     summarise(
       data = data_name,
-      mean_of_means = mean(mean, na.rm = TRUE),
-      sd_of_means = sd(mean, na.rm = TRUE),
-      wtd_mean_of_means = Hmisc::wtd.mean(mean, n),
-      wtd_sd_of_means = sqrt(Hmisc::wtd.var(mean, n)),
-      min_of_means = min(mean, na.rm = TRUE),
-      max_of_means = max(mean, na.rm = TRUE),
-      n_groups = n(),
+      mean_school = mean(mean, na.rm = TRUE),
+      sd_school = sd(mean, na.rm = TRUE),
+      wtd_mean_school = Hmisc::wtd.mean(mean, n),
+      wtd_sd_school = sqrt(Hmisc::wtd.var(mean, n)),
+      min_school = min(mean, na.rm = TRUE),
+      max_school = max(mean, na.rm = TRUE),
+      # n_groups = n(),
+      n_schools = sum(!is.na(mean)),
       .groups = "drop"
     )
+  
+  # Step 5: Combine with teacher-level stats
+  school_stats <- data_desc %>%
+    left_join(school_stats, by = join_by(vars == variable))
   
   # Return both long data and summary stats
   return(list(

@@ -1089,11 +1089,10 @@ boot_ame_parallel <- function(
       group_by(.smooth) %>%
       summarise(mean_AME = mean(.derivative, na.rm = TRUE)) %>%
       # Ensure output order matches smooth_names
-      right_join(data.frame(.smooth = smooth_names), by = ".smooth") %>%
-      pull(mean_AME)
+      right_join(data.frame(.smooth = smooth_names), by = ".smooth") 
+    named_vector <- tibble::deframe(ames)
     
-    names(ames) <- smooth_names
-    ames
+    named_vector
   }, future.seed = TRUE)
   
 }

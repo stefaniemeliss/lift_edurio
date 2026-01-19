@@ -1222,7 +1222,11 @@ get_gam_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars
   
   # Filter clusters with too little observations
   cluster_sizes <- table(df_std$clusters)
-  clusters_too_small <- names(cluster_sizes)[cluster_sizes < min_cluster_size]
+  if (!is.na(min_cluster_size)) {
+    clusters_too_small <- names(cluster_sizes)[cluster_sizes < min_cluster_size]
+  } else {
+    clusters_too_small <- character()
+  }
   
   # For binary outcome, filter clusters with only one outcome class
   if (binary_outcome) {

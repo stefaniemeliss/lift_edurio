@@ -359,7 +359,11 @@ get_betas_cluster <- function(df, outcome, predictors, fe_vars, cluster_vars, bi
   }
   
   # Multiway cluster-robust SEs: school, year, school-year pair
-  cluster_list <- list(df[[cluster_vars[1]]], df[[cluster_vars[2]]], interaction(df[[cluster_vars[1]]], df[[cluster_vars[2]]]))
+  if (length(cluster_vars) == 2) {
+    cluster_list <- list(df[[cluster_vars[1]]], df[[cluster_vars[2]]], interaction(df[[cluster_vars[1]]], df[[cluster_vars[2]]]))
+  } else if (length(cluster_vars) == 1) {
+    cluster_list <- list(df[[cluster_vars]])
+  }
   vcov_unstd <- sandwich::vcovCL(model_unstd, cluster = cluster_list)
   vcov_std   <- sandwich::vcovCL(model_std,   cluster = cluster_list)
   
